@@ -1,0 +1,12 @@
+/target
+*.pdb
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+err.txt
+out.txt
+nul
+temp/
+.claude/

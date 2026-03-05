@@ -1,0 +1,112 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+          - target: x86_64-apple-darwin
+            runner: macos-latest
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gdcli-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/release/gdcli
+            target/${{ matrix.target }}/release/gdcli.exe
+
+  universal-macos:
+    needs: build
+    runs-on: macos-latest
+    steps:
+      - name: Download x86_64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gdcli-x86_64-apple-darwin
+          path: x86_64
+
+      - name: Download aarch64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gdcli-aarch64-apple-darwin
+          path: aarch64
+
+      - name: Create universal binary
+        run: |
+          chmod +x x86_64/gdcli aarch64/gdcli
+          lipo -create x86_64/gdcli aarch64/gdcli -output gdcli
+          chmod +x gdcli
+
+      - name: Upload universal artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gdcli-macos-universal
+          path: gdcli
+
+  release:
+    needs: [build, universal-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Windows binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gdcli-x86_64-pc-windows-msvc
+          path: windows
+
+      - name: Download Linux binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gdcli-x86_64-unknown-linux-musl
+          path: linux
+
+      - name: Download macOS universal binary
+        uses: actions/download-artifact@v4
+        with:
+          name: gdcli-macos-universal
+          path: macos
+
+      - name: Package archives
+        run: |
+          cd windows && zip ../gdcli-windows-x86_64.zip gdcli.exe && cd ..
+          cd linux && chmod +x gdcli && tar czf ../gdcli-linux-x86_64.tar.gz gdcli && cd ..
+          cd macos && chmod +x gdcli && tar czf ../gdcli-macos-universal.tar.gz gdcli && cd ..
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            gdcli-windows-x86_64.zip
+            gdcli-linux-x86_64.tar.gz
+            gdcli-macos-universal.tar.gz
