@@ -84,6 +84,7 @@ Run `gdcli doctor` to verify your setup.
 | `gdcli scene create path.tscn --root-type Node2D` | Create a new scene file |
 | `gdcli scene edit path.tscn --set Player::speed=200` | Edit node properties in a scene |
 | `gdcli scene inspect path.tscn` | Show all nodes, resources, sub-resources, and connections |
+| `gdcli scene inspect path.tscn --node Player` | Inspect a single node and its referenced resources |
 
 ### Nodes
 
@@ -91,6 +92,7 @@ Run `gdcli doctor` to verify your setup.
 |---|---|
 | `gdcli node add scene.tscn Sprite2D MySprite --parent Player --script res://scripts/my.gd --props texture=icon.png` | Add a node to a scene |
 | `gdcli node add scene.tscn MyEnemy --instance res://scenes/enemy.tscn` | Add an instanced scene node |
+| `gdcli node add scene.tscn CollisionShape2D MyShape --sub-resource RectangleShape2D --sub-resource-props "size=Vector2(30,30)"` | Add a node with an inline sub-resource |
 | `gdcli node remove scene.tscn MySprite` | Remove a node and its children |
 
 ### Sub-resources
@@ -98,6 +100,7 @@ Run `gdcli doctor` to verify your setup.
 | Command | Description |
 |---|---|
 | `gdcli sub-resource add scene.tscn RectangleShape2D --props "size=Vector2(40,40)" --wire-node CollisionShape --wire-property shape` | Create a sub-resource and wire it to a node |
+| `gdcli sub-resource add scene.tscn CircleShape2D` | Create an unwired sub-resource (emits a warning) |
 | `gdcli sub-resource edit scene.tscn RectangleShape2D_abc --set "size=Vector2(60,60)"` | Edit properties on an existing sub-resource |
 
 ### Connections
