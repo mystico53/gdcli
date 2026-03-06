@@ -312,12 +312,9 @@ gdcli commands split into two layers:
 
 ## Contributing
 
-Contributions welcome! gdcli is early-stage and there's plenty to do:
+gdcli is built with AI tools, for AI tools. Contributions using AI agents, copilots, or any other workflow are welcome — there's no disclosure requirement. What matters is the outcome.
 
-- New commands and features
-- Better error messages
-- Platform-specific fixes (Linux/macOS testing especially welcome)
-- Documentation and examples
+### Getting started
 
 ```sh
 git clone https://github.com/mystico53/gdcli
@@ -326,7 +323,31 @@ cargo build
 cargo test
 ```
 
-See [AGENTS.md](AGENTS.md) for architecture details and source layout.
+### Quality gates
+
+Every PR should pass these before review:
+
+- `cargo build` compiles cleanly
+- `cargo test` — all tests pass
+- `cargo clippy` — no warnings
+- Actually test the feature/fix with a real Godot project
+
+### Areas of contribution
+
+- New commands and features
+- Better error messages
+- Platform-specific fixes (Linux/macOS testing especially welcome)
+- Documentation and examples
+
+### For AI agents
+
+Start with [AGENTS.md](AGENTS.md) — it covers architecture, source layout, and design decisions. [CLAUDE.md](CLAUDE.md) has project-specific instructions for Claude Code.
+
+### PR tips
+
+- Keep PRs focused — one feature or fix per PR
+- Describe what changed and why
+- Mention what you tested (which Godot version, which OS, what scenario)
 
 ## License
 

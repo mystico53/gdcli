@@ -50,6 +50,9 @@ pub fn run_mcp_server(project_dir: Option<&str>) -> anyhow::Result<()> {
 }
 
 fn handle_request(req: &protocol::JsonRpcRequest) -> String {
+    // Clean up expired/stale sessions on every request
+    crate::session::cleanup_sessions();
+
     match req.method.as_str() {
         "initialize" => {
             let resp = JsonRpcResponse::new(
@@ -170,7 +173,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tools_list_has_19_tools() {
+    fn test_tools_list_has_23_tools() {
         let req = protocol::JsonRpcRequest {
             jsonrpc: "2.0".into(),
             id: Some(json!(2)),
@@ -180,7 +183,7 @@ mod tests {
         let resp = handle_request(&req);
         let parsed: Value = serde_json::from_str(&resp).unwrap();
         let tools = parsed["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 19);
+        assert_eq!(tools.len(), 23);
     }
 
     #[test]

@@ -255,6 +255,55 @@ pub fn all_tools() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
+            name: "run_start",
+            description: "Start a Godot project running headlessly in the background. Returns a session_id to poll with run_read or stop with run_stop. Does NOT block the server.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Timeout in seconds (default: 30). Process is killed if it exceeds this.",
+                        "default": 30
+                    },
+                    "scene": {
+                        "type": "string",
+                        "description": "Scene path to run (default: main scene)"
+                    }
+                },
+                "additionalProperties": false
+            }),
+        },
+        ToolDef {
+            name: "run_read",
+            description: "Poll a running session for new stdout/stderr output since last read. Returns session status (running, exited, timed_out, killed) and incremental output.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "session_id": {
+                        "type": "string",
+                        "description": "Session ID returned by run_start"
+                    }
+                },
+                "required": ["session_id"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDef {
+            name: "run_stop",
+            description: "Stop a running session (kills process if still running) and return all accumulated output. The session is removed after this call.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "session_id": {
+                        "type": "string",
+                        "description": "Session ID returned by run_start"
+                    }
+                },
+                "required": ["session_id"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDef {
             name: "docs",
             description: "Look up Godot API documentation for a class or member",
             schema: json!({
@@ -359,6 +408,43 @@ pub fn all_tools() -> Vec<ToolDef> {
                     }
                 },
                 "required": ["scene", "id", "set"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDef {
+            name: "load_sprite",
+            description: "Add a Sprite2D/Sprite3D node with a texture wired up in a single call. Validates the texture file exists on disk.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "scene": {
+                        "type": "string",
+                        "description": "Path to the .tscn file"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Name for the new sprite node"
+                    },
+                    "texture": {
+                        "type": "string",
+                        "description": "Texture resource path (e.g. res://icon.svg)"
+                    },
+                    "sprite_type": {
+                        "type": "string",
+                        "description": "Sprite2D (default) or Sprite3D",
+                        "default": "Sprite2D"
+                    },
+                    "parent": {
+                        "type": "string",
+                        "description": "Parent node name (default: root node)"
+                    },
+                    "props": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Additional properties as key=val strings (e.g. [\"position=Vector2(100,200)\"])"
+                    }
+                },
+                "required": ["scene", "name", "texture"],
                 "additionalProperties": false
             }),
         },

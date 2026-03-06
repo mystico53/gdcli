@@ -26,11 +26,15 @@ pub fn call_tool(name: &str, args: &Value) -> ToolResult {
         "script_create" => dispatch_script_create(args),
         "script_lint" => dispatch_script_lint(args),
         "run" => dispatch_run(args),
+        "run_start" => dispatch_run_start(args),
+        "run_read" => dispatch_run_read(args),
+        "run_stop" => dispatch_run_stop(args),
         "docs" => dispatch_docs(args),
         "docs_build" => dispatch_docs_build(),
         "scene_inspect" => dispatch_scene_inspect(args),
         "sub_resource_add" => dispatch_sub_resource_add(args),
         "sub_resource_edit" => dispatch_sub_resource_edit(args),
+        "load_sprite" => dispatch_load_sprite(args),
         "connection_add" => dispatch_connection_add(args),
         "connection_remove" => dispatch_connection_remove(args),
         _ => Err(anyhow::anyhow!("Unknown tool: {}", name)),
@@ -301,6 +305,43 @@ fn dispatch_docs(args: &Value) -> anyhow::Result<bool> {
     commands::docs::run_docs(&class, member.as_deref(), members, true)
 }
 
+fn dispatch_load_sprite(args: &Value) -> anyhow::Result<bool> {
+    let scene =
+        str_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
+    let name =
+        str_arg(args, "name").ok_or_else(|| anyhow::anyhow!("missing required arg: name"))?;
+    let texture =
+        str_arg(args, "texture").ok_or_else(|| anyhow::anyhow!("missing required arg: texture"))?;
+    let sprite_type = str_arg(args, "sprite_type");
+    let parent = str_arg(args, "parent");
+
+    let props_raw = str_array_arg(args, "props");
+    let parsed_props: Vec<(String, String)> = props_raw
+        .iter()
+        .filter_map(|p| {
+            let parts: Vec<&str> = p.splitn(2, '=').collect();
+            if parts.len() == 2 {
+                Some((
+                    parts[0].to_string(),
+                    scene_parser::format_prop_value(parts[1]),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    commands::sprite::run_load_sprite(
+        &scene,
+        &name,
+        &texture,
+        sprite_type.as_deref(),
+        parent.as_deref(),
+        &parsed_props,
+        true,
+    )
+}
+
 fn dispatch_connection_add(args: &Value) -> anyhow::Result<bool> {
     let scene =
         str_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
@@ -345,6 +386,24 @@ fn dispatch_run(args: &Value) -> anyhow::Result<bool> {
     let timeout = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(30);
     let scene = str_arg(args, "scene");
     commands::run::run_project(&godot_info, timeout, scene.as_deref(), true)
+}
+
+fn dispatch_run_start(args: &Value) -> anyhow::Result<bool> {
+    let timeout = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(30);
+    let scene = str_arg(args, "scene");
+    commands::run_session::run_start(timeout, scene.as_deref(), true)
+}
+
+fn dispatch_run_read(args: &Value) -> anyhow::Result<bool> {
+    let session_id = str_arg(args, "session_id")
+        .ok_or_else(|| anyhow::anyhow!("missing required arg: session_id"))?;
+    commands::run_session::run_read(&session_id, true)
+}
+
+fn dispatch_run_stop(args: &Value) -> anyhow::Result<bool> {
+    let session_id = str_arg(args, "session_id")
+        .ok_or_else(|| anyhow::anyhow!("missing required arg: session_id"))?;
+    commands::run_session::run_stop(&session_id, true)
 }
 
 fn dispatch_docs_build() -> anyhow::Result<bool> {
