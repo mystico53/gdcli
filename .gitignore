@@ -11,3 +11,4 @@ nul
 temp/
 .claude/
 .mcp.json
+*.stackdump
