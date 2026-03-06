@@ -126,7 +126,7 @@ pub fn all_tools() -> Vec<ToolDef> {
                     "set": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "Property edits in NodeName::property=value format"
+                        "description": "Property edits in NodeName::property=value format. String values are auto-quoted. Use slash syntax for theme overrides: `Label::theme_override_font_sizes/font_size=28`"
                     }
                 },
                 "required": ["path", "set"],
@@ -166,7 +166,7 @@ pub fn all_tools() -> Vec<ToolDef> {
                     "props": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "Properties as key=val strings (one per array element)"
+                        "description": "Properties as key=val strings (one per array element). String values are auto-quoted — do NOT wrap in quotes. Use slash syntax for theme overrides: `theme_override_font_sizes/font_size=28`"
                     },
                     "sub_resource_type": {
                         "type": "string",
@@ -403,7 +403,7 @@ pub fn all_tools() -> Vec<ToolDef> {
                     "props": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "Properties as key=val strings (e.g. [\"size=Vector2(30,30)\"])"
+                        "description": "Properties as key=val strings (e.g. [\"size=Vector2(30,30)\"]). String values are auto-quoted."
                     },
                     "wire_node": {
                         "type": "string",
@@ -435,7 +435,7 @@ pub fn all_tools() -> Vec<ToolDef> {
                     "set": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "Property edits as key=value strings (e.g. [\"size=Vector2(50,50)\"])"
+                        "description": "Property edits as key=value strings (e.g. [\"size=Vector2(50,50)\"]). String values are auto-quoted."
                     }
                 },
                 "required": ["scene", "id", "set"],
@@ -472,7 +472,7 @@ pub fn all_tools() -> Vec<ToolDef> {
                     "props": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "Additional properties as key=val strings (e.g. [\"position=Vector2(100,200)\"])"
+                        "description": "Additional properties as key=val strings (e.g. [\"position=Vector2(100,200)\"]). String values are auto-quoted."
                     }
                 },
                 "required": ["scene", "name", "texture"],

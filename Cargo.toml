@@ -1,6 +1,6 @@
 [package]
 name = "gdcli"
-version = "0.1.7"
+version = "0.1.9"
 edition = "2021"
 description = "Agent-friendly CLI for Godot 4"
 license = "MIT"

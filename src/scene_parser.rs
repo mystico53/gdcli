@@ -1049,6 +1049,11 @@ pub fn atomic_write(path: &Path, content: &str) -> anyhow::Result<()> {
 /// Parse simple property values for the --props flag.
 /// Handles: booleans, integers, floats, strings, and Godot types passed through verbatim.
 pub fn format_prop_value(value: &str) -> String {
+    // Already quoted — return as-is to avoid double-quoting
+    if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
+        return value.to_string();
+    }
+
     // Boolean
     if value == "true" || value == "false" {
         return value.to_string();
@@ -1459,6 +1464,11 @@ visible = false
             "{\"key\": \"val\"}"
         );
         assert_eq!(format_prop_value("{}"), "{}");
+        // Already-quoted strings — should NOT double-quote
+        assert_eq!(format_prop_value("\"Score: 0\""), "\"Score: 0\"");
+        assert_eq!(format_prop_value("\"res://foo.gd\""), "\"res://foo.gd\"");
+        assert_eq!(format_prop_value("\"hello world\""), "\"hello world\"");
+        assert_eq!(format_prop_value("\"\""), "\"\"");
     }
 
     #[test]
