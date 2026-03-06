@@ -50,26 +50,14 @@ Other Godot MCP tools launch the Godot engine for every operation — adding a n
 
 ## Install
 
-**Download prebuilt binaries (easiest):**
+**Download binary (fastest startup):**
 
-Grab the latest release for your platform from the [Releases page](https://github.com/mystico53/gdcli/releases/latest) — Windows, Linux, and macOS (universal) binaries are available. Extract and add to your PATH.
+Grab the latest release for your platform from the [Releases page](https://github.com/mystico53/gdcli/releases/latest) — Windows, Linux, and macOS (universal) binaries available. Extract and add to your PATH.
 
 **From source:**
 
 ```sh
 cargo install --git https://github.com/mystico53/gdcli
-```
-
-**Linux / macOS install script:**
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/mystico53/gdcli/main/install.sh | sh
-```
-
-**Windows (PowerShell):**
-
-```powershell
-irm https://raw.githubusercontent.com/mystico53/gdcli/main/install.ps1 | iex
 ```
 
 ## Prerequisites

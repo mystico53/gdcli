@@ -170,3 +170,26 @@ jobs:
             gdcli-windows-x86_64.zip
             gdcli-linux-x86_64.tar.gz
             gdcli-macos-universal.tar.gz
+
+  publish-npm:
+    needs: [resolve-version, release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Set npm package version from tag
+        run: |
+          TAG="${{ needs.resolve-version.outputs.tag }}"
+          VERSION="${TAG#v}"
+          cd npm
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+      - name: Publish to npm
+        run: cd npm && npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
