@@ -14,12 +14,20 @@ gdcli gives coding agents (and you) a structured, scriptable interface to Godot 
 
 **Claude Code (one command, no install needed):**
 ```bash
+# macOS / Linux
 claude mcp add --transport stdio gdcli -- npx -y gdcli-godot mcp
+
+# Windows
+claude mcp add --transport stdio gdcli -- cmd /c npx -y gdcli-godot mcp
 ```
 
 **Cursor / VS Code / other MCP clients** — add to your MCP config:
 ```json
+// macOS / Linux
 { "mcpServers": { "gdcli": { "command": "npx", "args": ["-y", "gdcli-godot", "mcp"] } } }
+
+// Windows
+{ "mcpServers": { "gdcli": { "command": "cmd", "args": ["/c", "npx", "-y", "gdcli-godot", "mcp"] } } }
 ```
 
 **Using native binary (faster startup, requires [Install](#install) first):**
@@ -203,7 +211,7 @@ Every response uses the same envelope:
 
 ## MCP server mode
 
-gdcli includes a built-in [MCP](https://modelcontextprotocol.io/) server that exposes all 23 commands as tools. Any MCP-compatible client (Claude Code, Claude Desktop, Cursor, Cline, etc.) can use it.
+gdcli includes a built-in [MCP](https://modelcontextprotocol.io/) server that exposes all 24 commands as tools. Any MCP-compatible client (Claude Code, Claude Desktop, Cursor, Cline, etc.) can use it.
 
 **Configure in `.mcp.json`** (or your client's MCP config):
 
