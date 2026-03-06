@@ -83,13 +83,29 @@ Run `gdcli doctor` to verify your setup.
 | `gdcli scene validate path.tscn` | Check for broken resource references |
 | `gdcli scene create path.tscn --root-type Node2D` | Create a new scene file |
 | `gdcli scene edit path.tscn --set Player::speed=200` | Edit node properties in a scene |
+| `gdcli scene inspect path.tscn` | Show all nodes, resources, sub-resources, and connections |
 
 ### Nodes
 
 | Command | Description |
 |---|---|
 | `gdcli node add scene.tscn Sprite2D MySprite --parent Player --script res://scripts/my.gd --props texture=icon.png` | Add a node to a scene |
+| `gdcli node add scene.tscn MyEnemy --instance res://scenes/enemy.tscn` | Add an instanced scene node |
 | `gdcli node remove scene.tscn MySprite` | Remove a node and its children |
+
+### Sub-resources
+
+| Command | Description |
+|---|---|
+| `gdcli sub-resource add scene.tscn RectangleShape2D --props "size=Vector2(40,40)" --wire-node CollisionShape --wire-property shape` | Create a sub-resource and wire it to a node |
+| `gdcli sub-resource edit scene.tscn RectangleShape2D_abc --set "size=Vector2(60,60)"` | Edit properties on an existing sub-resource |
+
+### Connections
+
+| Command | Description |
+|---|---|
+| `gdcli connection add scene.tscn pressed Button . _on_button_pressed` | Add a signal connection between nodes |
+| `gdcli connection remove scene.tscn pressed Button . _on_button_pressed` | Remove a signal connection |
 
 ### Project
 
@@ -155,7 +171,7 @@ Every response uses the same envelope:
 
 ## MCP server mode
 
-gdcli includes a built-in [MCP](https://modelcontextprotocol.io/) server that exposes all 14 commands as tools. Any MCP-compatible client (Claude Code, Claude Desktop, Cursor, Cline, etc.) can use it.
+gdcli includes a built-in [MCP](https://modelcontextprotocol.io/) server that exposes all 19 commands as tools. Any MCP-compatible client (Claude Code, Claude Desktop, Cursor, Cline, etc.) can use it.
 
 **Configure in `.mcp.json`** (or your client's MCP config):
 
@@ -184,7 +200,7 @@ The `cwd` should point to your Godot project root (the directory with `project.g
 }
 ```
 
-All 14 tools are exposed: `doctor`, `project_info`, `scene_list`, `scene_validate`, `scene_create`, `scene_edit`, `node_add`, `node_remove`, `uid_fix`, `script_create`, `script_lint`, `run`, `docs`, `docs_build`.
+All 19 tools are exposed: `doctor`, `project_info`, `scene_list`, `scene_validate`, `scene_create`, `scene_edit`, `scene_inspect`, `node_add`, `node_remove`, `sub_resource_add`, `sub_resource_edit`, `connection_add`, `connection_remove`, `uid_fix`, `script_create`, `script_lint`, `run`, `docs`, `docs_build`.
 
 ## Agentic workflow
 
@@ -202,6 +218,12 @@ All 14 tools are exposed: `doctor`, `project_info`, `scene_list`, `scene_validat
     |                         |                        |
     |-- gdcli node add ------>|                        |
     |<-- JSON: node added ----|  (filesystem only)     |
+    |                         |                        |
+    |-- gdcli sub-resource -->|                        |
+    |<-- JSON: wired to node -|  (filesystem only)     |
+    |                         |                        |
+    |-- gdcli scene inspect ->|                        |
+    |<-- JSON: full structure -|  (filesystem only)    |
     |                         |                        |
     |-- gdcli script lint --->|--- --check-only ------>|
     |<-- JSON: errors[] ------|                        |
@@ -221,7 +243,7 @@ gdcli commands split into two layers:
 
 | Layer | Commands | How it works |
 |---|---|---|
-| **Filesystem** | `project info`, `scene list/validate/create/edit`, `node add/remove`, `uid fix`, `script create`, `docs` | Direct file I/O — parses `.tscn`, `.tres`, `.uid`, `.godot`, and XML files. Instant, no Godot needed. |
+| **Filesystem** | `project info`, `scene list/validate/create/edit/inspect`, `node add/remove`, `sub-resource add/edit`, `connection add/remove`, `uid fix`, `script create`, `docs` | Direct file I/O — parses `.tscn`, `.tres`, `.uid`, `.godot`, and XML files. Instant, no Godot needed. |
 | **Godot subprocess** | `doctor`, `script lint`, `run`, `docs --build` | Spawns Godot with `--headless`, captures stdout/stderr. Works with stock Godot 4. |
 
 ## Contributing

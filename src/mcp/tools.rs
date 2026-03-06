@@ -104,7 +104,7 @@ pub fn all_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "node_add",
-            description: "Add a typed node or instanced scene to a scene file. Provide either node_type or instance (not both).",
+            description: "Add a typed node or instanced scene to a scene file. Provide either node_type or instance (not both). Use sub_resource_type to create an inline sub_resource and wire it to the node (e.g. CollisionShape2D + RectangleShape2D in one call).",
             schema: json!({
                 "type": "object",
                 "properties": {
@@ -136,6 +136,19 @@ pub fn all_tools() -> Vec<ToolDef> {
                         "type": "array",
                         "items": { "type": "string" },
                         "description": "Properties as key=val strings (one per array element)"
+                    },
+                    "sub_resource_type": {
+                        "type": "string",
+                        "description": "Create an inline sub_resource of this type and wire it to the node (e.g. RectangleShape2D, CircleShape2D)"
+                    },
+                    "sub_resource_props": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Properties for the sub_resource as key=val strings (e.g. [\"size=Vector2(30,30)\"])"
+                    },
+                    "sub_resource_property": {
+                        "type": "string",
+                        "description": "Property on the node to wire the sub_resource to (auto-inferred for common types like CollisionShape2D→shape, MeshInstance3D→mesh)"
                     }
                 },
                 "required": ["scene", "name"],
@@ -271,6 +284,143 @@ pub fn all_tools() -> Vec<ToolDef> {
             schema: json!({
                 "type": "object",
                 "properties": {},
+                "additionalProperties": false
+            }),
+        },
+        ToolDef {
+            name: "scene_inspect",
+            description: "Inspect a scene file — returns nodes, ext_resources, sub_resources (with properties), and connections. Use --node to filter to a single node and its referenced resources.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the .tscn file"
+                    },
+                    "node": {
+                        "type": "string",
+                        "description": "Filter to a single node by name — only returns that node plus its referenced sub_resources and ext_resources"
+                    }
+                },
+                "required": ["path"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDef {
+            name: "sub_resource_add",
+            description: "Add a sub_resource (e.g. shape, material) to a scene file, optionally wiring it to a node property",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "scene": {
+                        "type": "string",
+                        "description": "Path to the .tscn file"
+                    },
+                    "resource_type": {
+                        "type": "string",
+                        "description": "Resource type (e.g. RectangleShape2D, CircleShape2D, BoxMesh, StandardMaterial3D)"
+                    },
+                    "props": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Properties as key=val strings (e.g. [\"size=Vector2(30,30)\"])"
+                    },
+                    "wire_node": {
+                        "type": "string",
+                        "description": "Node name to wire this sub_resource to (sets node property to SubResource(\"id\"))"
+                    },
+                    "wire_property": {
+                        "type": "string",
+                        "description": "Property on wire_node to set (required if wire_node is provided, e.g. \"shape\", \"mesh\", \"material\")"
+                    }
+                },
+                "required": ["scene", "resource_type"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDef {
+            name: "sub_resource_edit",
+            description: "Edit properties on an existing sub_resource in a scene file",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "scene": {
+                        "type": "string",
+                        "description": "Path to the .tscn file"
+                    },
+                    "id": {
+                        "type": "string",
+                        "description": "Sub-resource ID to edit (e.g. \"RectangleShape2D_abc5x\")"
+                    },
+                    "set": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Property edits as key=value strings (e.g. [\"size=Vector2(50,50)\"])"
+                    }
+                },
+                "required": ["scene", "id", "set"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDef {
+            name: "connection_add",
+            description: "Add a signal connection between nodes in a scene file",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "scene": {
+                        "type": "string",
+                        "description": "Path to the .tscn file"
+                    },
+                    "signal": {
+                        "type": "string",
+                        "description": "Signal name (e.g. pressed, timeout, body_entered)"
+                    },
+                    "from": {
+                        "type": "string",
+                        "description": "Source node name (emitter) — use \".\" for root"
+                    },
+                    "to": {
+                        "type": "string",
+                        "description": "Target node name (receiver) — use \".\" for root"
+                    },
+                    "method": {
+                        "type": "string",
+                        "description": "Method name on the target node (e.g. _on_button_pressed)"
+                    }
+                },
+                "required": ["scene", "signal", "from", "to", "method"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDef {
+            name: "connection_remove",
+            description: "Remove a signal connection from a scene file",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "scene": {
+                        "type": "string",
+                        "description": "Path to the .tscn file"
+                    },
+                    "signal": {
+                        "type": "string",
+                        "description": "Signal name"
+                    },
+                    "from": {
+                        "type": "string",
+                        "description": "Source node name — use \".\" for root"
+                    },
+                    "to": {
+                        "type": "string",
+                        "description": "Target node name — use \".\" for root"
+                    },
+                    "method": {
+                        "type": "string",
+                        "description": "Method name on the target node"
+                    }
+                },
+                "required": ["scene", "signal", "from", "to", "method"],
                 "additionalProperties": false
             }),
         },

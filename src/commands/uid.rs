@@ -1,10 +1,11 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
 use crate::output;
+use crate::project_util;
 use crate::scene_parser;
 
 #[derive(Serialize)]
@@ -24,12 +25,7 @@ pub struct UidFix {
 }
 
 pub fn run_fix(dry_run: bool, json_mode: bool) -> Result<bool> {
-    if !Path::new("project.godot").is_file() {
-        bail!(
-            "project.godot not found in current directory.\n\
-             Run this command from your Godot project root."
-        );
-    }
+    project_util::ensure_project_context(None)?;
 
     // Build UID → path map from the .godot/uid_cache.bin or by scanning .uid files
     let uid_map = build_uid_map()?;

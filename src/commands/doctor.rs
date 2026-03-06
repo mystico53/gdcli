@@ -5,6 +5,7 @@ use std::path::Path;
 
 use crate::godot_finder::GodotInfo;
 use crate::output;
+use crate::project_util;
 
 #[derive(Serialize)]
 pub struct DoctorReport {
@@ -33,15 +34,17 @@ pub fn run(godot_info: &GodotInfo, json_mode: bool) -> Result<bool> {
         ),
     });
 
-    // Check 2: project.godot exists in CWD
-    let project_exists = Path::new("project.godot").is_file();
+    // Check 2: project.godot exists (search up from CWD)
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let project_root = project_util::find_project_root(&cwd);
+    let project_exists = project_root.is_some();
     checks.push(CheckResult {
         name: "project_file".into(),
         passed: project_exists,
-        message: if project_exists {
-            "project.godot found".into()
+        message: if let Some(ref root) = project_root {
+            format!("project.godot found at {}", root.display())
         } else {
-            "project.godot not found in current directory".into()
+            "project.godot not found in current directory or parent directories".into()
         },
     });
 

@@ -4,6 +4,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::output;
+use crate::project_util;
 use crate::scene_parser;
 
 // --- scene create ---
@@ -16,6 +17,7 @@ pub struct SceneCreateReport {
 }
 
 pub fn run_create(scene_path: &str, root_type: &str, root_name: Option<&str>, script: Option<&str>, force: bool, json_mode: bool) -> Result<bool> {
+    project_util::ensure_project_context(Some(Path::new(scene_path)))?;
     let path = Path::new(scene_path);
 
     if path.is_file() && !force {
@@ -82,12 +84,7 @@ pub struct SceneEntry {
 }
 
 pub fn run_list(json_mode: bool) -> Result<bool> {
-    if !Path::new("project.godot").is_file() {
-        bail!(
-            "project.godot not found in current directory.\n\
-             Run this command from your Godot project root."
-        );
-    }
+    project_util::ensure_project_context(None)?;
 
     let scene_files = scene_parser::find_scene_files(Path::new("."));
     let mut scenes = Vec::new();
@@ -162,6 +159,8 @@ pub fn run_validate(scene_path: &str, json_mode: bool) -> Result<bool> {
     if !path.is_file() {
         bail!("Scene file not found: {}", scene_path);
     }
+    scene_parser::require_scene_file(path)?;
+    project_util::ensure_project_context(Some(path))?;
 
     let parsed = scene_parser::parse_scene(path)?;
     let mut issues = Vec::new();
@@ -230,6 +229,288 @@ pub fn run_validate(scene_path: &str, json_mode: bool) -> Result<bool> {
     Ok(clean)
 }
 
+// --- scene inspect ---
+
+#[derive(Serialize)]
+pub struct SceneInspectReport {
+    pub scene: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_filter: Option<String>,
+    pub ext_resources: Vec<InspectExtResource>,
+    pub sub_resources: Vec<InspectSubResource>,
+    pub nodes: Vec<InspectNode>,
+    pub connections: Vec<InspectConnection>,
+}
+
+#[derive(Serialize)]
+pub struct InspectExtResource {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub resource_type: String,
+    pub path: String,
+}
+
+#[derive(Serialize)]
+pub struct InspectSubResource {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub resource_type: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub properties: Vec<InspectProperty>,
+}
+
+#[derive(Serialize)]
+pub struct InspectNode {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub node_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub properties: Vec<InspectProperty>,
+}
+
+#[derive(Serialize)]
+pub struct InspectProperty {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Serialize)]
+pub struct InspectConnection {
+    pub signal: String,
+    pub from: String,
+    pub to: String,
+    pub method: String,
+}
+
+/// Extract SubResource("id") and ExtResource("id") references from a property value string.
+fn extract_resource_refs(value: &str) -> (Vec<String>, Vec<String>) {
+    let mut sub_ids = Vec::new();
+    let mut ext_ids = Vec::new();
+    for cap in value.match_indices("SubResource(\"") {
+        let start = cap.0 + "SubResource(\"".len();
+        if let Some(end) = value[start..].find("\")") {
+            sub_ids.push(value[start..start + end].to_string());
+        }
+    }
+    for cap in value.match_indices("ExtResource(\"") {
+        let start = cap.0 + "ExtResource(\"".len();
+        if let Some(end) = value[start..].find("\")") {
+            ext_ids.push(value[start..start + end].to_string());
+        }
+    }
+    (sub_ids, ext_ids)
+}
+
+pub fn run_inspect(scene_path: &str, node_filter: Option<&str>, json_mode: bool) -> Result<bool> {
+    project_util::ensure_project_context(Some(Path::new(scene_path)))?;
+    let path = Path::new(scene_path);
+    if !path.is_file() {
+        bail!("Scene file not found: {}", scene_path);
+    }
+    scene_parser::require_scene_file(path)?;
+
+    let parsed = scene_parser::parse_scene(path)?;
+
+    // Apply node filter if provided
+    let (filtered_nodes, filtered_sub_resources, filtered_ext_resources, filtered_connections) =
+        if let Some(name) = node_filter {
+            let target = parsed.nodes.iter().find(|n| n.name == name);
+            if target.is_none() {
+                bail!("Node '{}' not found in {}", name, scene_path);
+            }
+            let target = target.unwrap();
+
+            // Collect resource refs from the node's properties + instance
+            let mut sub_ids = Vec::new();
+            let mut ext_ids = Vec::new();
+            for prop in &target.properties {
+                let (s, e) = extract_resource_refs(&prop.value);
+                sub_ids.extend(s);
+                ext_ids.extend(e);
+            }
+            if let Some(ref inst) = target.instance {
+                let (_, e) = extract_resource_refs(inst);
+                ext_ids.extend(e);
+            }
+
+            // Recursively collect refs from referenced sub_resources
+            let mut i = 0;
+            while i < sub_ids.len() {
+                if let Some(sub) = parsed.sub_resources.iter().find(|s| s.id == sub_ids[i]) {
+                    for prop in &sub.properties {
+                        let (s, e) = extract_resource_refs(&prop.value);
+                        for sid in s {
+                            if !sub_ids.contains(&sid) {
+                                sub_ids.push(sid);
+                            }
+                        }
+                        ext_ids.extend(e);
+                    }
+                }
+                i += 1;
+            }
+
+            let nodes: Vec<_> = vec![target.clone()];
+            let subs: Vec<_> = parsed
+                .sub_resources
+                .iter()
+                .filter(|s| sub_ids.contains(&s.id))
+                .cloned()
+                .collect();
+            let exts: Vec<_> = parsed
+                .ext_resources
+                .iter()
+                .filter(|e| ext_ids.contains(&e.id))
+                .cloned()
+                .collect();
+            // Connections involving this node (by name or "." for root)
+            let node_path = &target.name;
+            let conns: Vec<_> = parsed
+                .connections
+                .iter()
+                .filter(|c| c.from == *node_path || c.to == *node_path)
+                .cloned()
+                .collect();
+            (nodes, subs, exts, conns)
+        } else {
+            (
+                parsed.nodes.clone(),
+                parsed.sub_resources.clone(),
+                parsed.ext_resources.clone(),
+                parsed.connections.clone(),
+            )
+        };
+
+    if json_mode {
+        let report = SceneInspectReport {
+            scene: scene_path.to_string(),
+            uid: parsed.uid.clone(),
+            node_filter: node_filter.map(String::from),
+            ext_resources: filtered_ext_resources
+                .iter()
+                .map(|e| InspectExtResource {
+                    id: e.id.clone(),
+                    resource_type: e.resource_type.clone(),
+                    path: e.path.clone(),
+                })
+                .collect(),
+            sub_resources: filtered_sub_resources
+                .iter()
+                .map(|s| InspectSubResource {
+                    id: s.id.clone(),
+                    resource_type: s.resource_type.clone(),
+                    properties: s
+                        .properties
+                        .iter()
+                        .map(|p| InspectProperty {
+                            key: p.key.clone(),
+                            value: p.value.clone(),
+                        })
+                        .collect(),
+                })
+                .collect(),
+            nodes: filtered_nodes
+                .iter()
+                .map(|n| InspectNode {
+                    name: n.name.clone(),
+                    node_type: n.node_type.clone(),
+                    parent: n.parent.clone(),
+                    instance: n.instance.clone(),
+                    properties: n
+                        .properties
+                        .iter()
+                        .map(|p| InspectProperty {
+                            key: p.key.clone(),
+                            value: p.value.clone(),
+                        })
+                        .collect(),
+                })
+                .collect(),
+            connections: filtered_connections
+                .iter()
+                .map(|c| InspectConnection {
+                    signal: c.signal.clone(),
+                    from: c.from.clone(),
+                    to: c.to.clone(),
+                    method: c.method.clone(),
+                })
+                .collect(),
+        };
+        let envelope = output::JsonEnvelope {
+            ok: true,
+            command: "scene inspect".into(),
+            data: Some(report),
+            error: None,
+        };
+        output::emit_json(&envelope);
+    } else {
+        output::print_header(&format!("Scene: {}", scene_path));
+        if let Some(ref uid) = parsed.uid {
+            println!("  UID: {}", uid);
+        }
+        if let Some(name) = node_filter {
+            println!("  Filtered to node: {}", name);
+        }
+
+        if !filtered_ext_resources.is_empty() {
+            println!();
+            println!("  External Resources ({}):", filtered_ext_resources.len());
+            for ext in &filtered_ext_resources {
+                println!("    [{}] {} — {}", ext.id, ext.resource_type, ext.path);
+            }
+        }
+
+        if !filtered_sub_resources.is_empty() {
+            println!();
+            println!("  Sub Resources ({}):", filtered_sub_resources.len());
+            for sub in &filtered_sub_resources {
+                println!("    [{}] {}", sub.id, sub.resource_type);
+                for prop in &sub.properties {
+                    println!("      {} = {}", prop.key, prop.value);
+                }
+            }
+        }
+
+        if !filtered_nodes.is_empty() {
+            println!();
+            println!("  Nodes ({}):", filtered_nodes.len());
+            for node in &filtered_nodes {
+                let parent_str = match &node.parent {
+                    Some(p) => format!(" (parent: {})", p),
+                    None => " (root)".to_string(),
+                };
+                if let Some(ref inst) = node.instance {
+                    println!("    {} [instance] {}{}", node.name, inst, parent_str);
+                } else {
+                    println!("    {} [{}]{}", node.name, node.node_type, parent_str);
+                }
+                for prop in &node.properties {
+                    println!("      {} = {}", prop.key, prop.value);
+                }
+            }
+        }
+
+        if !filtered_connections.is_empty() {
+            println!();
+            println!("  Connections ({}):", filtered_connections.len());
+            for conn in &filtered_connections {
+                println!(
+                    "    {}.{} -> {}.{}",
+                    conn.from, conn.signal, conn.to, conn.method
+                );
+            }
+        }
+    }
+
+    Ok(true)
+}
+
 // --- scene edit ---
 
 #[derive(Serialize)]
@@ -246,10 +527,12 @@ pub struct EditEntry {
 }
 
 pub fn run_edit(scene_path: &str, set_args: &[String], json_mode: bool) -> Result<bool> {
+    project_util::ensure_project_context(Some(Path::new(scene_path)))?;
     let path = Path::new(scene_path);
     if !path.is_file() {
         bail!("Scene file not found: {}", scene_path);
     }
+    scene_parser::require_scene_file(path)?;
 
     let mut edits = Vec::new();
 
@@ -272,7 +555,15 @@ pub fn run_edit(scene_path: &str, set_args: &[String], json_mode: bool) -> Resul
         }
         let property = prop_parts[0];
         let raw_value = prop_parts[1];
-        let value = scene_parser::format_prop_value(raw_value);
+
+        // Resource-aware: if value is a res:// path, add an ext_resource and use ExtResource("id")
+        let value = if raw_value.starts_with("res://") {
+            let res_type = scene_parser::infer_resource_type(raw_value);
+            let ext_id = scene_parser::add_ext_resource_to_file(path, raw_value, res_type)?;
+            format!("ExtResource(\"{}\")", ext_id)
+        } else {
+            scene_parser::format_prop_value(raw_value)
+        };
 
         scene_parser::edit_node_property(path, node_name, property, &value)?;
 

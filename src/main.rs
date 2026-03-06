@@ -4,6 +4,7 @@ mod errors;
 mod godot_finder;
 mod mcp;
 mod output;
+mod project_util;
 mod runner;
 mod scene_parser;
 
@@ -48,16 +49,28 @@ enum Commands {
         action: ProjectAction,
     },
 
-    /// Scene operations (list, validate, create, edit)
+    /// Scene operations (list, validate, create, edit, inspect)
     Scene {
         #[command(subcommand)]
         action: SceneAction,
+    },
+
+    /// Sub-resource operations (add, edit)
+    SubResource {
+        #[command(subcommand)]
+        action: SubResourceAction,
     },
 
     /// Node operations (add, remove)
     Node {
         #[command(subcommand)]
         action: NodeAction,
+    },
+
+    /// Signal connection operations (add, remove)
+    Connection {
+        #[command(subcommand)]
+        action: ConnectionAction,
     },
 
     /// Fix stale UID references
@@ -168,6 +181,53 @@ enum SceneAction {
         #[arg(long = "set", required = true)]
         set: Vec<String>,
     },
+
+    /// Inspect a scene file (show all nodes, resources, connections)
+    Inspect {
+        /// Path to the .tscn file
+        path: String,
+
+        /// Filter to a single node (includes only its referenced sub_resources and ext_resources)
+        #[arg(long)]
+        node: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum SubResourceAction {
+    /// Add a sub_resource to a scene file
+    Add {
+        /// Path to the .tscn file
+        scene: String,
+
+        /// Resource type (e.g. RectangleShape2D, CircleShape2D, BoxMesh)
+        resource_type: String,
+
+        /// Properties as key=val pairs (semicolon-separated)
+        #[arg(long, value_delimiter = ';')]
+        props: Vec<String>,
+
+        /// Wire to this node by setting its property to SubResource("id")
+        #[arg(long)]
+        wire_node: Option<String>,
+
+        /// Property on the wire_node to set (required if wire_node is set)
+        #[arg(long)]
+        wire_property: Option<String>,
+    },
+
+    /// Edit properties on an existing sub_resource
+    Edit {
+        /// Path to the .tscn file
+        scene: String,
+
+        /// Sub-resource ID to edit
+        id: String,
+
+        /// Property edits as key=value pairs
+        #[arg(long = "set", required = true)]
+        set: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -198,6 +258,18 @@ enum NodeAction {
         /// Properties as key=val pairs (semicolon-separated)
         #[arg(long, value_delimiter = ';')]
         props: Vec<String>,
+
+        /// Create an inline sub_resource of this type and wire it to the node
+        #[arg(long = "sub-resource")]
+        sub_resource: Option<String>,
+
+        /// Properties for the sub_resource as key=val pairs (semicolon-separated)
+        #[arg(long = "sub-resource-props", value_delimiter = ';')]
+        sub_resource_props: Vec<String>,
+
+        /// Property on the node to wire the sub_resource to (inferred from node type if not set)
+        #[arg(long = "sub-resource-property")]
+        sub_resource_property: Option<String>,
     },
 
     /// Remove a node (and its children) from a scene file
@@ -207,6 +279,45 @@ enum NodeAction {
 
         /// Name of the node to remove
         name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConnectionAction {
+    /// Add a signal connection between nodes
+    Add {
+        /// Path to the .tscn file
+        scene: String,
+
+        /// Signal name (e.g. pressed, timeout, body_entered)
+        signal: String,
+
+        /// Source node name (emitter) — use "." for root
+        from: String,
+
+        /// Target node name (receiver) — use "." for root
+        to: String,
+
+        /// Method name on the target node
+        method: String,
+    },
+
+    /// Remove a signal connection
+    Remove {
+        /// Path to the .tscn file
+        scene: String,
+
+        /// Signal name
+        signal: String,
+
+        /// Source node name — use "." for root
+        from: String,
+
+        /// Target node name — use "." for root
+        to: String,
+
+        /// Method name on the target node
+        method: String,
     },
 }
 
@@ -269,6 +380,48 @@ fn run(command: Commands, json_mode: bool) -> anyhow::Result<()> {
                     force,
                 } => commands::scene::run_create(path, root_type, root_name.as_deref(), script.as_deref(), *force, json_mode)?,
                 SceneAction::Edit { path, set } => commands::scene::run_edit(path, set, json_mode)?,
+                SceneAction::Inspect { path, node } => commands::scene::run_inspect(path, node.as_deref(), json_mode)?,
+            };
+            if !ok {
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+        Commands::SubResource { action } => {
+            let ok = match action {
+                SubResourceAction::Add {
+                    scene,
+                    resource_type,
+                    props,
+                    wire_node,
+                    wire_property,
+                } => {
+                    let parsed_props: Vec<(String, String)> = props
+                        .iter()
+                        .filter_map(|p| {
+                            let parts: Vec<&str> = p.splitn(2, '=').collect();
+                            if parts.len() == 2 {
+                                Some((
+                                    parts[0].to_string(),
+                                    scene_parser::format_prop_value(parts[1]),
+                                ))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    commands::sub_resource::run_add(
+                        scene,
+                        resource_type,
+                        &parsed_props,
+                        wire_node.as_deref(),
+                        wire_property.as_deref(),
+                        json_mode,
+                    )?
+                }
+                SubResourceAction::Edit { scene, id, set } => {
+                    commands::sub_resource::run_edit(scene, id, set, json_mode)?
+                }
             };
             if !ok {
                 std::process::exit(1);
@@ -285,11 +438,28 @@ fn run(command: Commands, json_mode: bool) -> anyhow::Result<()> {
                     script,
                     instance,
                     props,
+                    sub_resource,
+                    sub_resource_props,
+                    sub_resource_property,
                 } => {
                     if node_type.is_none() && instance.is_none() {
                         anyhow::bail!("Either <NODE_TYPE> or --instance must be provided");
                     }
                     let parsed_props: Vec<(String, String)> = props
+                        .iter()
+                        .filter_map(|p| {
+                            let parts: Vec<&str> = p.splitn(2, '=').collect();
+                            if parts.len() == 2 {
+                                Some((
+                                    parts[0].to_string(),
+                                    scene_parser::format_prop_value(parts[1]),
+                                ))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    let parsed_sub_props: Vec<(String, String)> = sub_resource_props
                         .iter()
                         .filter_map(|p| {
                             let parts: Vec<&str> = p.splitn(2, '=').collect();
@@ -311,12 +481,37 @@ fn run(command: Commands, json_mode: bool) -> anyhow::Result<()> {
                         script.as_deref(),
                         &parsed_props,
                         instance.as_deref(),
+                        sub_resource.as_deref(),
+                        &parsed_sub_props,
+                        sub_resource_property.as_deref(),
                         json_mode,
                     )?
                 }
                 NodeAction::Remove { scene, name } => {
                     commands::node::run_remove(scene, name, json_mode)?
                 }
+            };
+            if !ok {
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+        Commands::Connection { action } => {
+            let ok = match action {
+                ConnectionAction::Add {
+                    scene,
+                    signal,
+                    from,
+                    to,
+                    method,
+                } => commands::connection::run_add(&scene, &signal, &from, &to, &method, json_mode)?,
+                ConnectionAction::Remove {
+                    scene,
+                    signal,
+                    from,
+                    to,
+                    method,
+                } => commands::connection::run_remove(&scene, &signal, &from, &to, &method, json_mode)?,
             };
             if !ok {
                 std::process::exit(1);

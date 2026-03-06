@@ -171,7 +171,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tools_list_has_14_tools() {
+    fn test_tools_list_has_19_tools() {
         let req = protocol::JsonRpcRequest {
             jsonrpc: "2.0".into(),
             id: Some(json!(2)),
@@ -181,7 +181,7 @@ mod tests {
         let resp = handle_request(&req);
         let parsed: Value = serde_json::from_str(&resp).unwrap();
         let tools = parsed["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 14);
+        assert_eq!(tools.len(), 19);
     }
 
     #[test]

@@ -6,6 +6,7 @@ use std::path::Path;
 use crate::errors::{self, GodotError};
 use crate::godot_finder::GodotInfo;
 use crate::output;
+use crate::project_util;
 use crate::runner;
 use crate::scene_parser;
 
@@ -39,6 +40,7 @@ pub fn run_create(
     force: bool,
     json_mode: bool,
 ) -> Result<bool> {
+    project_util::ensure_project_context(Some(Path::new(script_path)))?;
     let path = Path::new(script_path);
 
     if path.is_file() && !force {
@@ -157,12 +159,7 @@ fn lint_single_file(godot_info: &GodotInfo, file_path: &str) -> Result<runner::R
         bail!("File not found: {}", file_path);
     }
 
-    if !Path::new("project.godot").is_file() {
-        bail!(
-            "project.godot not found in current directory.\n\
-             Run this command from your Godot project root."
-        );
-    }
+    project_util::ensure_project_context(Some(Path::new(file_path)))?;
 
     runner::run_raw(
         &godot_info.path,
@@ -173,12 +170,7 @@ fn lint_single_file(godot_info: &GodotInfo, file_path: &str) -> Result<runner::R
 
 /// Lint the whole project by loading it with `--quit`.
 fn lint_project(godot_info: &GodotInfo) -> Result<runner::RunResult> {
-    if !Path::new("project.godot").is_file() {
-        bail!(
-            "project.godot not found in current directory.\n\
-             Run this command from your Godot project root."
-        );
-    }
+    project_util::ensure_project_context(None)?;
 
     runner::run(&godot_info.path, &["--quit"], 60)
 }

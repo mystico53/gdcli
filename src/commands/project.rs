@@ -1,9 +1,10 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
 
 use crate::output;
+use crate::project_util;
 
 #[derive(Serialize)]
 pub struct ProjectInfo {
@@ -15,12 +16,7 @@ pub struct ProjectInfo {
 }
 
 pub fn run_info(json_mode: bool) -> Result<bool> {
-    if !Path::new("project.godot").is_file() {
-        bail!(
-            "project.godot not found in current directory.\n\
-             Run this command from your Godot project root."
-        );
-    }
+    project_util::ensure_project_context(None)?;
 
     let content = fs::read_to_string("project.godot")?;
     let info = parse_project_godot(&content);

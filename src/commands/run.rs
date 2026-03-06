@@ -1,10 +1,11 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 use serde::Serialize;
 use std::path::Path;
 
 use crate::errors::{self, GodotError};
 use crate::godot_finder::GodotInfo;
 use crate::output;
+use crate::project_util;
 use crate::runner;
 
 #[derive(Serialize)]
@@ -24,12 +25,7 @@ pub fn run_project(
     scene: Option<&str>,
     json_mode: bool,
 ) -> Result<bool> {
-    if !Path::new("project.godot").is_file() {
-        bail!(
-            "project.godot not found in current directory.\n\
-             Run this command from your Godot project root."
-        );
-    }
+    project_util::ensure_project_context(scene.map(Path::new))?;
 
     let mut args: Vec<&str> = Vec::new();
 

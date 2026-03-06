@@ -28,6 +28,8 @@ pub struct ExtResource {
 pub struct SubResource {
     pub id: String,
     pub resource_type: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub properties: Vec<NodeProperty>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -55,6 +57,19 @@ pub struct Connection {
     pub from: String,
     pub to: String,
     pub method: String,
+}
+
+/// Verify that `path` has a `.tscn` or `.tres` extension.
+/// Prevents accidental corruption of non-scene files (e.g. project.godot).
+pub fn require_scene_file(path: &Path) -> anyhow::Result<()> {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("tscn" | "tres") => Ok(()),
+        _ => anyhow::bail!(
+            "Expected a .tscn or .tres file, got: {}\n\
+             Scene/node operations only work on Godot scene and resource files.",
+            path.display()
+        ),
+    }
 }
 
 /// Parse a .tscn file and return its structure.
@@ -112,8 +127,23 @@ pub fn parse_scene_text(content: &str) -> anyhow::Result<ParsedScene> {
             let resource_type = extract_quoted_attr(trimmed, "type").unwrap_or_default();
             let id = extract_quoted_attr(trimmed, "id").unwrap_or_default();
 
-            sub_resources.push(SubResource { id, resource_type });
+            // Collect properties (lines after [sub_resource ...] until next section or blank line)
+            let mut properties = Vec::new();
             i += 1;
+            while i < lines.len() {
+                let prop_line = lines[i].trim();
+                if prop_line.is_empty() || prop_line.starts_with('[') {
+                    break;
+                }
+                if let Some(eq_pos) = prop_line.find(" = ") {
+                    let key = prop_line[..eq_pos].to_string();
+                    let value = prop_line[eq_pos + 3..].to_string();
+                    properties.push(NodeProperty { key, value });
+                }
+                i += 1;
+            }
+
+            sub_resources.push(SubResource { id, resource_type, properties });
             continue;
         }
 
@@ -286,6 +316,9 @@ pub fn write_scene(scene: &ParsedScene) -> String {
             "[sub_resource type=\"{}\" id=\"{}\"]\n",
             sub.resource_type, sub.id
         ));
+        for prop in &sub.properties {
+            out.push_str(&format!("{} = {}\n", prop.key, prop.value));
+        }
     }
 
     // Nodes
@@ -373,6 +406,198 @@ fn generate_ext_resource_id(index: usize) -> String {
     format!("{}_{}", index + 1, suffix)
 }
 
+/// Generate a short random sub_resource ID like "TypeName_abc5x".
+fn generate_sub_resource_id(resource_type: &str) -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+
+    let charset = b"abcdefghijklmnopqrstuvwxyz0123456789";
+    let mut state = seed;
+    let mut suffix = String::with_capacity(5);
+
+    for _ in 0..5 {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+        let idx = ((state >> 33) as usize) % charset.len();
+        suffix.push(charset[idx] as char);
+    }
+
+    format!("{}_{}", resource_type, suffix)
+}
+
+/// Find insertion position for new sub_resources.
+/// After last [sub_resource] block, or after last [ext_resource], or after header.
+fn find_sub_resource_insert_pos(content: &str) -> usize {
+    let mut last_sub_end = None;
+    let mut last_ext_end = None;
+    let mut header_end = None;
+
+    let lines: Vec<&str> = content.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+        if trimmed.starts_with("[gd_scene ") {
+            header_end = Some(i);
+        }
+        if trimmed.starts_with("[ext_resource ") {
+            last_ext_end = Some(i);
+        }
+        if trimmed.starts_with("[sub_resource ") {
+            // Skip past properties to find end of this sub_resource block
+            i += 1;
+            while i < lines.len() {
+                let prop_line = lines[i].trim();
+                if prop_line.is_empty() || prop_line.starts_with('[') {
+                    break;
+                }
+                i += 1;
+            }
+            last_sub_end = Some(i - 1);
+            // Check if we stopped on a blank line — include it in the position
+            if i < lines.len() && lines[i].trim().is_empty() {
+                last_sub_end = Some(i);
+            }
+            continue;
+        }
+        i += 1;
+    }
+
+    let target_line = last_sub_end.or(last_ext_end).or(header_end).unwrap_or(0);
+
+    // Find byte position at end of target line
+    let mut byte_pos = 0;
+    for (idx, line) in content.lines().enumerate() {
+        byte_pos += line.len() + 1; // +1 for newline
+        if idx == target_line {
+            return byte_pos;
+        }
+    }
+    content.len()
+}
+
+/// Add a sub_resource to a .tscn file.
+/// If `wire_node` and `wire_property` are both provided, sets the node's property
+/// to `SubResource("id")` referencing the newly created sub_resource.
+/// Returns the generated sub_resource ID.
+pub fn add_sub_resource_to_file(
+    path: &Path,
+    resource_type: &str,
+    props: &[(String, String)],
+    wire_node: Option<&str>,
+    wire_property: Option<&str>,
+) -> anyhow::Result<String> {
+    require_scene_file(path)?;
+    let content = fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))?;
+
+    let sub_id = generate_sub_resource_id(resource_type);
+
+    // Build the sub_resource section
+    let mut section = format!(
+        "\n[sub_resource type=\"{}\" id=\"{}\"]\n",
+        resource_type, sub_id
+    );
+    for (key, value) in props {
+        section.push_str(&format!("{} = {}\n", key, value));
+    }
+
+    let insert_pos = find_sub_resource_insert_pos(&content);
+    let mut new_content = content;
+    new_content.insert_str(insert_pos, &section);
+    new_content = update_load_steps(&new_content);
+
+    atomic_write(path, &new_content)?;
+
+    // Wire to a node if requested
+    if let (Some(node), Some(prop)) = (wire_node, wire_property) {
+        let wire_value = format!("SubResource(\"{}\")", sub_id);
+        edit_node_property(path, node, prop, &wire_value)?;
+    }
+
+    Ok(sub_id)
+}
+
+/// Edit a property on an existing sub_resource by ID.
+pub fn edit_sub_resource_property(
+    path: &Path,
+    sub_id: &str,
+    property: &str,
+    value: &str,
+) -> anyhow::Result<()> {
+    require_scene_file(path)?;
+    let content = fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))?;
+
+    // Verify sub_resource exists
+    let scene = parse_scene_text(&content)?;
+    if !scene.sub_resources.iter().any(|s| s.id == sub_id) {
+        anyhow::bail!("SubResource '{}' not found in scene", sub_id);
+    }
+
+    let lines: Vec<&str> = content.lines().collect();
+    let mut result: Vec<String> = Vec::new();
+    let mut i = 0;
+    let mut found_and_set = false;
+
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+
+        if trimmed.starts_with("[sub_resource ") {
+            let id = extract_quoted_attr(trimmed, "id").unwrap_or_default();
+            result.push(lines[i].to_string());
+            i += 1;
+
+            if id == sub_id {
+                // Inside target sub_resource — look for existing property
+                let mut property_set = false;
+                while i < lines.len() {
+                    let prop_trimmed = lines[i].trim();
+                    if prop_trimmed.is_empty() || prop_trimmed.starts_with('[') {
+                        break;
+                    }
+                    if prop_trimmed.starts_with(&format!("{} = ", property)) {
+                        result.push(format!("{} = {}", property, value));
+                        property_set = true;
+                        found_and_set = true;
+                    } else {
+                        result.push(lines[i].to_string());
+                    }
+                    i += 1;
+                }
+                if !property_set {
+                    // Add new property
+                    result.push(format!("{} = {}", property, value));
+                    found_and_set = true;
+                }
+                continue;
+            }
+        } else {
+            result.push(lines[i].to_string());
+            i += 1;
+        }
+    }
+
+    if !found_and_set {
+        anyhow::bail!(
+            "Failed to set property '{}' on sub_resource '{}'",
+            property,
+            sub_id
+        );
+    }
+
+    let new_content = result.join("\n");
+    let new_content = if new_content.ends_with('\n') {
+        new_content
+    } else {
+        new_content + "\n"
+    };
+
+    atomic_write(path, &new_content)
+}
+
 /// Add a node to a parsed scene. Returns the modified scene.
 /// Operates on the raw text for faithful round-tripping.
 ///
@@ -388,6 +613,7 @@ pub fn add_node_to_file(
     props: &[(String, String)],
     instance_path: Option<&str>,
 ) -> anyhow::Result<()> {
+    require_scene_file(path)?;
     let content = fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))?;
 
@@ -487,6 +713,7 @@ pub fn add_node_to_file(
 
 /// Remove a node and its children from a .tscn file.
 pub fn remove_node_from_file(path: &Path, node_name: &str) -> anyhow::Result<Vec<String>> {
+    require_scene_file(path)?;
     let content = fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))?;
 
@@ -615,6 +842,7 @@ pub fn edit_node_property(
     property: &str,
     value: &str,
 ) -> anyhow::Result<()> {
+    require_scene_file(path)?;
     let content = fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))?;
 
@@ -832,6 +1060,16 @@ pub fn format_prop_value(value: &str) -> String {
         return value.to_string();
     }
 
+    // Arrays: [...] — pass through unquoted
+    if value.starts_with('[') && value.ends_with(']') {
+        return value.to_string();
+    }
+
+    // Dictionaries: {...} — pass through unquoted
+    if value.starts_with('{') && value.ends_with('}') {
+        return value.to_string();
+    }
+
     // res:// paths
     if value.starts_with("res://") {
         return format!("\"{}\"", value);
@@ -872,6 +1110,182 @@ fn extract_attr(line: &str, attr: &str) -> Option<String> {
     // Value ends at space or ]
     let end = rest.find([' ', ']']).unwrap_or(rest.len());
     Some(rest[..end].to_string())
+}
+
+/// Infer the Godot resource type from a file extension.
+/// e.g. `.gd` → `"Script"`, `.tscn` → `"PackedScene"`, `.tres` → `"Resource"`.
+pub fn infer_resource_type(path: &str) -> &'static str {
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    match ext {
+        "gd" => "Script",
+        "tscn" => "PackedScene",
+        "tres" => "Resource",
+        "png" | "jpg" | "jpeg" | "webp" | "svg" | "bmp" => "Texture2D",
+        "ogg" | "wav" | "mp3" => "AudioStream",
+        "ttf" | "otf" | "woff" | "woff2" => "FontFile",
+        "gdshader" | "shader" => "Shader",
+        _ => "Resource",
+    }
+}
+
+/// Add an ext_resource to a scene file if not already present.
+/// Returns the ext_resource ID (existing or newly created).
+pub fn add_ext_resource_to_file(path: &Path, res_path: &str, res_type: &str) -> anyhow::Result<String> {
+    let content = fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))?;
+
+    let scene = parse_scene_text(&content)?;
+
+    // Check if this resource is already referenced
+    for ext in &scene.ext_resources {
+        if ext.path == res_path {
+            return Ok(ext.id.clone());
+        }
+    }
+
+    // Add a new ext_resource
+    let ext_id = generate_ext_resource_id(scene.ext_resources.len());
+    let ext_line = format!(
+        "\n[ext_resource type=\"{}\" path=\"{}\" id=\"{}\"]\n",
+        res_type, res_path, ext_id
+    );
+
+    let mut new_content = content;
+    let insert_pos = find_ext_resource_insert_pos(&new_content);
+    new_content.insert_str(insert_pos, &ext_line);
+    new_content = update_load_steps(&new_content);
+
+    atomic_write(path, &new_content)?;
+
+    Ok(ext_id)
+}
+
+/// Add a signal connection to a .tscn file.
+/// Validates that `from` and `to` nodes exist (or are "."), and checks for duplicates.
+/// Appends `[connection signal="..." from="..." to="..." method="..."]` at end of file.
+pub fn add_connection_to_file(
+    path: &Path,
+    signal: &str,
+    from: &str,
+    to: &str,
+    method: &str,
+) -> anyhow::Result<()> {
+    require_scene_file(path)?;
+    let content = fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))?;
+
+    let scene = parse_scene_text(&content)?;
+
+    // Validate from node exists
+    if from != "." {
+        let root_name = scene.nodes.first().map(|n| n.name.as_str()).unwrap_or("");
+        if !scene.nodes.iter().any(|n| n.name == from) && from != root_name {
+            anyhow::bail!("Node '{}' (from) not found in scene", from);
+        }
+    }
+
+    // Validate to node exists
+    if to != "." {
+        let root_name = scene.nodes.first().map(|n| n.name.as_str()).unwrap_or("");
+        if !scene.nodes.iter().any(|n| n.name == to) && to != root_name {
+            anyhow::bail!("Node '{}' (to) not found in scene", to);
+        }
+    }
+
+    // Check for duplicate connection
+    for conn in &scene.connections {
+        if conn.signal == signal && conn.from == from && conn.to == to && conn.method == method {
+            anyhow::bail!(
+                "Duplicate connection: {}.{} -> {}.{} already exists",
+                from,
+                signal,
+                to,
+                method
+            );
+        }
+    }
+
+    // Append connection at end of file
+    let connection_line = format!(
+        "\n[connection signal=\"{}\" from=\"{}\" to=\"{}\" method=\"{}\"]\n",
+        signal, from, to, method
+    );
+
+    let mut new_content = content;
+    // Ensure file ends with newline before appending
+    if !new_content.ends_with('\n') {
+        new_content.push('\n');
+    }
+    new_content.push_str(&connection_line);
+
+    atomic_write(path, &new_content)
+}
+
+/// Remove a signal connection from a .tscn file.
+/// Finds the matching `[connection ...]` line and removes it (plus trailing blank line).
+pub fn remove_connection_from_file(
+    path: &Path,
+    signal: &str,
+    from: &str,
+    to: &str,
+    method: &str,
+) -> anyhow::Result<()> {
+    require_scene_file(path)?;
+    let content = fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))?;
+
+    let scene = parse_scene_text(&content)?;
+
+    // Verify connection exists
+    let found = scene.connections.iter().any(|c| {
+        c.signal == signal && c.from == from && c.to == to && c.method == method
+    });
+    if !found {
+        anyhow::bail!(
+            "Connection not found: {}.{} -> {}.{}",
+            from,
+            signal,
+            to,
+            method
+        );
+    }
+
+    // Build target connection line for matching
+    let target = format!(
+        "[connection signal=\"{}\" from=\"{}\" to=\"{}\" method=\"{}\"]",
+        signal, from, to, method
+    );
+
+    let lines: Vec<&str> = content.lines().collect();
+    let mut result_lines: Vec<&str> = Vec::new();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+        if trimmed == target {
+            // Skip this line
+            i += 1;
+            // Skip trailing blank line if present
+            if i < lines.len() && lines[i].trim().is_empty() {
+                i += 1;
+            }
+            continue;
+        }
+        result_lines.push(lines[i]);
+        i += 1;
+    }
+
+    let new_content = result_lines.join("\n");
+    let new_content = if new_content.ends_with('\n') {
+        new_content
+    } else {
+        new_content + "\n"
+    };
+
+    atomic_write(path, &new_content)
 }
 
 /// Recursively find all .tscn files, skipping hidden dirs and .godot/.
@@ -1016,6 +1430,13 @@ visible = false
         assert_eq!(format_prop_value("Vector2(1, 2)"), "Vector2(1, 2)");
         assert_eq!(format_prop_value("res://foo.gd"), "\"res://foo.gd\"");
         assert_eq!(format_prop_value("hello"), "\"hello\"");
+        // Arrays pass through unquoted
+        assert_eq!(format_prop_value("[\"enemies\"]"), "[\"enemies\"]");
+        assert_eq!(format_prop_value("[1, 2, 3]"), "[1, 2, 3]");
+        assert_eq!(format_prop_value("[]"), "[]");
+        // Dictionaries pass through unquoted
+        assert_eq!(format_prop_value("{\"key\": \"val\"}"), "{\"key\": \"val\"}");
+        assert_eq!(format_prop_value("{}"), "{}");
     }
 
     #[test]
@@ -1114,6 +1535,109 @@ visible = false
         assert!(parsed.nodes[1].instance.is_some());
 
         // Clean up
+        let _ = std::fs::remove_file(&scene_path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn test_parse_sub_resource_properties() {
+        let content = r#"[gd_scene load_steps=3 format=3 uid="uid://abc"]
+
+[ext_resource type="Script" path="res://player.gd" id="1_abc"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_abc"]
+size = Vector2(40, 40)
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_xyz"]
+radius = 20.0
+
+[node name="Player" type="CharacterBody2D"]
+script = ExtResource("1_abc")
+
+[node name="CollisionShape" type="CollisionShape2D" parent="."]
+shape = SubResource("RectangleShape2D_abc")
+"#;
+        let scene = parse_scene_text(content).unwrap();
+        assert_eq!(scene.sub_resources.len(), 2);
+
+        assert_eq!(scene.sub_resources[0].resource_type, "RectangleShape2D");
+        assert_eq!(scene.sub_resources[0].properties.len(), 1);
+        assert_eq!(scene.sub_resources[0].properties[0].key, "size");
+        assert_eq!(scene.sub_resources[0].properties[0].value, "Vector2(40, 40)");
+
+        assert_eq!(scene.sub_resources[1].resource_type, "CircleShape2D");
+        assert_eq!(scene.sub_resources[1].properties.len(), 1);
+        assert_eq!(scene.sub_resources[1].properties[0].key, "radius");
+        assert_eq!(scene.sub_resources[1].properties[0].value, "20.0");
+    }
+
+    #[test]
+    fn test_write_scene_with_sub_resources() {
+        let content = r#"[gd_scene load_steps=2 format=3 uid="uid://abc"]
+
+[sub_resource type="RectangleShape2D" id="Shape_abc"]
+size = Vector2(30, 30)
+
+[node name="Root" type="Node2D"]
+"#;
+        let scene = parse_scene_text(content).unwrap();
+        let written = write_scene(&scene);
+        assert!(written.contains("[sub_resource type=\"RectangleShape2D\" id=\"Shape_abc\"]"));
+        assert!(written.contains("size = Vector2(30, 30)"));
+    }
+
+    #[test]
+    fn test_add_connection_to_file() {
+        let dir = std::env::temp_dir().join("gdcli_test_conn_add");
+        let _ = std::fs::create_dir_all(&dir);
+        let scene_path = dir.join("test_conn.tscn");
+
+        let content = "[gd_scene format=3 uid=\"uid://abc\"]\n\n\
+            [node name=\"Main\" type=\"Node2D\"]\n\n\
+            [node name=\"Button1\" type=\"Button\" parent=\".\"]\n";
+        std::fs::write(&scene_path, content).unwrap();
+
+        add_connection_to_file(&scene_path, "pressed", "Button1", ".", "_on_pressed").unwrap();
+
+        let result = std::fs::read_to_string(&scene_path).unwrap();
+        assert!(result.contains("[connection signal=\"pressed\" from=\"Button1\" to=\".\" method=\"_on_pressed\"]"));
+
+        // Duplicate should fail
+        let dup = add_connection_to_file(&scene_path, "pressed", "Button1", ".", "_on_pressed");
+        assert!(dup.is_err());
+        assert!(dup.unwrap_err().to_string().contains("Duplicate"));
+
+        // Non-existent node should fail
+        let bad = add_connection_to_file(&scene_path, "pressed", "NoNode", ".", "_on_pressed");
+        assert!(bad.is_err());
+        assert!(bad.unwrap_err().to_string().contains("not found"));
+
+        let _ = std::fs::remove_file(&scene_path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn test_remove_connection_from_file() {
+        let dir = std::env::temp_dir().join("gdcli_test_conn_rm");
+        let _ = std::fs::create_dir_all(&dir);
+        let scene_path = dir.join("test_conn_rm.tscn");
+
+        let content = "[gd_scene format=3 uid=\"uid://abc\"]\n\n\
+            [node name=\"Main\" type=\"Node2D\"]\n\n\
+            [node name=\"Btn\" type=\"Button\" parent=\".\"]\n\n\
+            [connection signal=\"pressed\" from=\"Btn\" to=\".\" method=\"_on_btn\"]\n";
+        std::fs::write(&scene_path, content).unwrap();
+
+        remove_connection_from_file(&scene_path, "pressed", "Btn", ".", "_on_btn").unwrap();
+
+        let result = std::fs::read_to_string(&scene_path).unwrap();
+        assert!(!result.contains("[connection"));
+
+        // Removing again should fail
+        let bad = remove_connection_from_file(&scene_path, "pressed", "Btn", ".", "_on_btn");
+        assert!(bad.is_err());
+        assert!(bad.unwrap_err().to_string().contains("not found"));
+
         let _ = std::fs::remove_file(&scene_path);
         let _ = std::fs::remove_dir(&dir);
     }

@@ -28,6 +28,11 @@ pub fn call_tool(name: &str, args: &Value) -> ToolResult {
         "run" => dispatch_run(args),
         "docs" => dispatch_docs(args),
         "docs_build" => dispatch_docs_build(),
+        "scene_inspect" => dispatch_scene_inspect(args),
+        "sub_resource_add" => dispatch_sub_resource_add(args),
+        "sub_resource_edit" => dispatch_sub_resource_edit(args),
+        "connection_add" => dispatch_connection_add(args),
+        "connection_remove" => dispatch_connection_remove(args),
         _ => Err(anyhow::anyhow!("Unknown tool: {}", name)),
     };
 
@@ -132,6 +137,58 @@ fn dispatch_scene_edit(args: &Value) -> anyhow::Result<bool> {
     commands::scene::run_edit(&path, &set, true)
 }
 
+fn dispatch_scene_inspect(args: &Value) -> anyhow::Result<bool> {
+    let path =
+        str_arg(args, "path").ok_or_else(|| anyhow::anyhow!("missing required arg: path"))?;
+    let node = str_arg(args, "node");
+    commands::scene::run_inspect(&path, node.as_deref(), true)
+}
+
+fn dispatch_sub_resource_add(args: &Value) -> anyhow::Result<bool> {
+    let scene =
+        str_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
+    let resource_type = str_arg(args, "resource_type")
+        .ok_or_else(|| anyhow::anyhow!("missing required arg: resource_type"))?;
+    let wire_node = str_arg(args, "wire_node");
+    let wire_property = str_arg(args, "wire_property");
+
+    let props_raw = str_array_arg(args, "props");
+    let parsed_props: Vec<(String, String)> = props_raw
+        .iter()
+        .filter_map(|p| {
+            let parts: Vec<&str> = p.splitn(2, '=').collect();
+            if parts.len() == 2 {
+                Some((
+                    parts[0].to_string(),
+                    scene_parser::format_prop_value(parts[1]),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    commands::sub_resource::run_add(
+        &scene,
+        &resource_type,
+        &parsed_props,
+        wire_node.as_deref(),
+        wire_property.as_deref(),
+        true,
+    )
+}
+
+fn dispatch_sub_resource_edit(args: &Value) -> anyhow::Result<bool> {
+    let scene =
+        str_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
+    let id = str_arg(args, "id").ok_or_else(|| anyhow::anyhow!("missing required arg: id"))?;
+    let set = str_array_arg(args, "set");
+    if set.is_empty() {
+        anyhow::bail!("missing required arg: set");
+    }
+    commands::sub_resource::run_edit(&scene, &id, &set, true)
+}
+
 fn dispatch_node_add(args: &Value) -> anyhow::Result<bool> {
     let scene =
         str_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
@@ -144,6 +201,14 @@ fn dispatch_node_add(args: &Value) -> anyhow::Result<bool> {
 
     if node_type.is_none() && instance.is_none() {
         anyhow::bail!("Either node_type or instance must be provided");
+    }
+
+    if node_type.as_deref() == Some("PackedScene") {
+        anyhow::bail!(
+            "PackedScene is not a node type — it's a resource.\n\
+             To instance a scene, use the 'instance' parameter instead:\n  \
+             {{\"instance\": \"res://path/to/scene.tscn\"}}"
+        );
     }
 
     let props_raw = str_array_arg(args, "props");
@@ -161,6 +226,25 @@ fn dispatch_node_add(args: &Value) -> anyhow::Result<bool> {
             }
         })
         .collect();
+
+    let sub_resource_type = str_arg(args, "sub_resource_type");
+    let sub_resource_property = str_arg(args, "sub_resource_property");
+    let sub_props_raw = str_array_arg(args, "sub_resource_props");
+    let parsed_sub_props: Vec<(String, String)> = sub_props_raw
+        .iter()
+        .filter_map(|p| {
+            let parts: Vec<&str> = p.splitn(2, '=').collect();
+            if parts.len() == 2 {
+                Some((
+                    parts[0].to_string(),
+                    scene_parser::format_prop_value(parts[1]),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
+
     commands::node::run_add(
         &scene,
         node_type.as_deref(),
@@ -169,6 +253,9 @@ fn dispatch_node_add(args: &Value) -> anyhow::Result<bool> {
         script.as_deref(),
         &parsed_props,
         instance.as_deref(),
+        sub_resource_type.as_deref(),
+        &parsed_sub_props,
+        sub_resource_property.as_deref(),
         true,
     )
 }
@@ -201,6 +288,32 @@ fn dispatch_docs(args: &Value) -> anyhow::Result<bool> {
     let member = str_arg(args, "member");
     let members = bool_arg(args, "members");
     commands::docs::run_docs(&class, member.as_deref(), members, true)
+}
+
+fn dispatch_connection_add(args: &Value) -> anyhow::Result<bool> {
+    let scene =
+        str_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
+    let signal =
+        str_arg(args, "signal").ok_or_else(|| anyhow::anyhow!("missing required arg: signal"))?;
+    let from =
+        str_arg(args, "from").ok_or_else(|| anyhow::anyhow!("missing required arg: from"))?;
+    let to = str_arg(args, "to").ok_or_else(|| anyhow::anyhow!("missing required arg: to"))?;
+    let method =
+        str_arg(args, "method").ok_or_else(|| anyhow::anyhow!("missing required arg: method"))?;
+    commands::connection::run_add(&scene, &signal, &from, &to, &method, true)
+}
+
+fn dispatch_connection_remove(args: &Value) -> anyhow::Result<bool> {
+    let scene =
+        str_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
+    let signal =
+        str_arg(args, "signal").ok_or_else(|| anyhow::anyhow!("missing required arg: signal"))?;
+    let from =
+        str_arg(args, "from").ok_or_else(|| anyhow::anyhow!("missing required arg: from"))?;
+    let to = str_arg(args, "to").ok_or_else(|| anyhow::anyhow!("missing required arg: to"))?;
+    let method =
+        str_arg(args, "method").ok_or_else(|| anyhow::anyhow!("missing required arg: method"))?;
+    commands::connection::run_remove(&scene, &signal, &from, &to, &method, true)
 }
 
 // --- Dispatchers for commands that need Godot ---
