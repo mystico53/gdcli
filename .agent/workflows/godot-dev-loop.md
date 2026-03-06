@@ -5,7 +5,7 @@ Step-by-step workflow for AI agents editing Godot projects using gdcli for valid
 ## Prerequisites
 
 - gdcli is installed and on PATH (or run via `cargo run --` from the gdcli repo)
-- `GODOT_PATH` is set to a patched Godot binary with `--structured-errors` support
+- Godot 4 is on PATH, or `GODOT_PATH` is set to the Godot binary
 - Working directory is the Godot project root (contains `project.godot`)
 
 ## Workflow
@@ -20,7 +20,6 @@ gdcli doctor
 
 Check the JSON output:
 - `ok: true` means all checks passed
-- If `structured_errors` check fails, the Godot binary needs the `--structured-errors` patch
 - If `project_file` check fails, you're not in a Godot project directory
 
 ### Step 2 — Understand the Project

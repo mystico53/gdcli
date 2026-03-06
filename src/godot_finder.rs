@@ -6,20 +6,14 @@ use crate::runner;
 pub struct GodotInfo {
     pub path: PathBuf,
     pub version: String,
-    pub structured_errors_supported: bool,
 }
 
 /// Find the Godot binary and probe its capabilities.
 pub fn find_and_probe() -> Result<GodotInfo> {
     let path = find_binary()?;
     let version = probe_version(&path)?;
-    let structured_errors_supported = probe_structured_errors(&path);
 
-    Ok(GodotInfo {
-        path,
-        version,
-        structured_errors_supported,
-    })
+    Ok(GodotInfo { path, version })
 }
 
 /// Search for the Godot binary in order of priority:
@@ -122,30 +116,4 @@ fn probe_version(godot_path: &Path) -> Result<String> {
     }
 
     Ok(version)
-}
-
-/// Check if `--structured-errors` is supported by running a quick probe.
-/// Runs `--structured-errors --version` with a short timeout. Since
-/// `--structured-errors` implies debug mode, Godot may not exit on its own
-/// (it prints the version but keeps running). We consider the flag supported
-/// if the process starts successfully and outputs a version string — if the
-/// flag were unrecognized, Godot would print an error or fail to start.
-fn probe_structured_errors(godot_path: &Path) -> bool {
-    let result = runner::run_raw(godot_path, &["--structured-errors", "--version"], 5);
-
-    match result {
-        Ok(r) => {
-            // If it timed out but produced version output, the flag is supported.
-            // If it exited 0, it's supported.
-            // If it exited non-zero and didn't time out, the flag is unsupported.
-            if r.exit_code == 0 {
-                return true;
-            }
-            if r.timed_out && !r.stdout.trim().is_empty() {
-                return true;
-            }
-            false
-        }
-        Err(_) => false,
-    }
 }

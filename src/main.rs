@@ -1,6 +1,8 @@
 mod commands;
+mod docs_parser;
 mod errors;
 mod godot_finder;
+mod mcp;
 mod output;
 mod runner;
 mod scene_parser;
@@ -23,7 +25,7 @@ enum Commands {
     /// Check Godot installation and project health
     Doctor,
 
-    /// Lint GDScript files for parse errors
+    /// GDScript operations (lint, create)
     Script {
         #[command(subcommand)]
         action: ScriptAction,
@@ -46,16 +48,47 @@ enum Commands {
         action: ProjectAction,
     },
 
-    /// List and validate scene files
+    /// Scene operations (list, validate, create, edit)
     Scene {
         #[command(subcommand)]
         action: SceneAction,
+    },
+
+    /// Node operations (add, remove)
+    Node {
+        #[command(subcommand)]
+        action: NodeAction,
     },
 
     /// Fix stale UID references
     Uid {
         #[command(subcommand)]
         action: UidAction,
+    },
+
+    /// Start MCP server (JSON-RPC over stdio)
+    Mcp {
+        /// Set the working directory before starting the server
+        #[arg(long)]
+        project_dir: Option<String>,
+    },
+
+    /// Godot API documentation lookup
+    Docs {
+        /// Class name to look up
+        #[arg(required_unless_present = "build")]
+        class: Option<String>,
+
+        /// Specific member (method/property/signal) to look up
+        member: Option<String>,
+
+        /// List all methods, properties, and signals
+        #[arg(long)]
+        members: bool,
+
+        /// Build/rebuild docs cache by running `godot --doctool`
+        #[arg(long)]
+        build: bool,
     },
 }
 
@@ -66,6 +99,24 @@ enum ScriptAction {
         /// Check a single file instead of the whole project
         #[arg(long)]
         file: Option<String>,
+    },
+
+    /// Create a new GDScript file with boilerplate
+    Create {
+        /// Path for the new script file
+        path: String,
+
+        /// Base class to extend (default: Node)
+        #[arg(long, default_value = "Node")]
+        extends: String,
+
+        /// Comma-separated lifecycle methods to include
+        #[arg(long, value_delimiter = ',')]
+        methods: Vec<String>,
+
+        /// Overwrite if file already exists
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -84,6 +135,66 @@ enum SceneAction {
     Validate {
         /// Path to the .tscn file
         path: String,
+    },
+
+    /// Create a new .tscn scene file
+    Create {
+        /// Path for the new scene file
+        path: String,
+
+        /// Type of the root node
+        #[arg(long)]
+        root_type: String,
+
+        /// Overwrite if file already exists
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Edit node properties in a scene file
+    Edit {
+        /// Path to the .tscn file
+        path: String,
+
+        /// Property edits in NodeName::property=value format
+        #[arg(long = "set", required = true)]
+        set: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum NodeAction {
+    /// Add a node to a scene file
+    Add {
+        /// Path to the .tscn file
+        scene: String,
+
+        /// Node type (e.g. Sprite2D, Timer, Node2D)
+        node_type: String,
+
+        /// Name for the new node
+        name: String,
+
+        /// Parent node name (default: root node)
+        #[arg(long)]
+        parent: Option<String>,
+
+        /// Attach a script (res:// path)
+        #[arg(long)]
+        script: Option<String>,
+
+        /// Properties as key=val pairs
+        #[arg(long, value_delimiter = ',')]
+        props: Vec<String>,
+    },
+
+    /// Remove a node (and its children) from a scene file
+    Remove {
+        /// Path to the .tscn file
+        scene: String,
+
+        /// Name of the node to remove
+        name: String,
     },
 }
 
@@ -118,6 +229,11 @@ fn main() {
 }
 
 fn run(command: Commands, json_mode: bool) -> anyhow::Result<()> {
+    // MCP server mode — takes over stdio, never returns normally
+    if let Commands::Mcp { project_dir } = command {
+        return mcp::run_mcp_server(project_dir.as_deref());
+    }
+
     // Commands that don't need Godot (pure filesystem)
     match &command {
         Commands::Project {
@@ -133,6 +249,55 @@ fn run(command: Commands, json_mode: bool) -> anyhow::Result<()> {
             let ok = match action {
                 SceneAction::List => commands::scene::run_list(json_mode)?,
                 SceneAction::Validate { path } => commands::scene::run_validate(path, json_mode)?,
+                SceneAction::Create {
+                    path,
+                    root_type,
+                    force,
+                } => commands::scene::run_create(path, root_type, *force, json_mode)?,
+                SceneAction::Edit { path, set } => commands::scene::run_edit(path, set, json_mode)?,
+            };
+            if !ok {
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+        Commands::Node { action } => {
+            let ok = match action {
+                NodeAction::Add {
+                    scene,
+                    node_type,
+                    name,
+                    parent,
+                    script,
+                    props,
+                } => {
+                    let parsed_props: Vec<(String, String)> = props
+                        .iter()
+                        .filter_map(|p| {
+                            let parts: Vec<&str> = p.splitn(2, '=').collect();
+                            if parts.len() == 2 {
+                                Some((
+                                    parts[0].to_string(),
+                                    scene_parser::format_prop_value(parts[1]),
+                                ))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    commands::node::run_add(
+                        scene,
+                        node_type,
+                        name,
+                        parent.as_deref(),
+                        script.as_deref(),
+                        &parsed_props,
+                        json_mode,
+                    )?
+                }
+                NodeAction::Remove { scene, name } => {
+                    commands::node::run_remove(scene, name, json_mode)?
+                }
             };
             if !ok {
                 std::process::exit(1);
@@ -143,6 +308,40 @@ fn run(command: Commands, json_mode: bool) -> anyhow::Result<()> {
             action: UidAction::Fix { dry_run },
         } => {
             let ok = commands::uid::run_fix(*dry_run, json_mode)?;
+            if !ok {
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+        Commands::Script {
+            action:
+                ScriptAction::Create {
+                    path,
+                    extends,
+                    methods,
+                    force,
+                },
+        } => {
+            let ok = commands::script::run_create(path, extends, methods, *force, json_mode)?;
+            if !ok {
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+        Commands::Docs { build: true, .. } => {
+            let ok = commands::docs::run_build(json_mode)?;
+            if !ok {
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+        Commands::Docs {
+            class: Some(class),
+            member,
+            members,
+            build: false,
+        } => {
+            let ok = commands::docs::run_docs(class, member.as_deref(), *members, json_mode)?;
             if !ok {
                 std::process::exit(1);
             }

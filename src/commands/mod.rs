@@ -1,4 +1,6 @@
+pub mod docs;
 pub mod doctor;
+pub mod node;
 pub mod project;
 pub mod run;
 pub mod scene;

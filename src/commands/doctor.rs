@@ -33,18 +33,7 @@ pub fn run(godot_info: &GodotInfo, json_mode: bool) -> Result<bool> {
         ),
     });
 
-    // Check 2: --structured-errors supported
-    checks.push(CheckResult {
-        name: "structured_errors".into(),
-        passed: godot_info.structured_errors_supported,
-        message: if godot_info.structured_errors_supported {
-            "--structured-errors supported".into()
-        } else {
-            "--structured-errors NOT supported — gdcli requires a patched Godot build".into()
-        },
-    });
-
-    // Check 3: project.godot exists in CWD
+    // Check 2: project.godot exists in CWD
     let project_exists = Path::new("project.godot").is_file();
     checks.push(CheckResult {
         name: "project_file".into(),
@@ -56,7 +45,7 @@ pub fn run(godot_info: &GodotInfo, json_mode: bool) -> Result<bool> {
         },
     });
 
-    // Check 4: Count .gd files
+    // Check 3: Count .gd files
     let gd_count = count_gd_files(Path::new("."));
     checks.push(CheckResult {
         name: "gd_files".into(),

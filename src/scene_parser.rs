@@ -10,6 +10,10 @@ pub struct ParsedScene {
     pub sub_resources: Vec<SubResource>,
     pub nodes: Vec<SceneNode>,
     pub connections: Vec<Connection>,
+    /// Raw text content — preserved for faithful round-tripping.
+    #[serde(skip)]
+    #[allow(dead_code)]
+    pub raw: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -31,6 +35,15 @@ pub struct SceneNode {
     pub name: String,
     pub node_type: String,
     pub parent: Option<String>,
+    /// Properties like `script = ExtResource("1_abc")`, `position = Vector2(0, 0)`, etc.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub properties: Vec<NodeProperty>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NodeProperty {
+    pub key: String,
+    pub value: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -58,8 +71,11 @@ pub fn parse_scene_text(content: &str) -> anyhow::Result<ParsedScene> {
     let mut nodes = Vec::new();
     let mut connections = Vec::new();
 
-    for line in content.lines() {
-        let trimmed = line.trim();
+    let lines: Vec<&str> = content.lines().collect();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
 
         // Scene header: [gd_scene load_steps=2 format=3 uid="uid://xxx"]
         if trimmed.starts_with("[gd_scene ") {
@@ -67,6 +83,8 @@ pub fn parse_scene_text(content: &str) -> anyhow::Result<ParsedScene> {
             if let Some(fmt) = extract_attr(trimmed, "format") {
                 format = fmt.parse().unwrap_or(3);
             }
+            i += 1;
+            continue;
         }
 
         // External resource: [ext_resource type="Script" path="res://..." id="1_abc"]
@@ -82,6 +100,8 @@ pub fn parse_scene_text(content: &str) -> anyhow::Result<ParsedScene> {
                 path,
                 uid: res_uid,
             });
+            i += 1;
+            continue;
         }
 
         // Sub-resource: [sub_resource type="Animation" id="Animation_abc"]
@@ -90,6 +110,8 @@ pub fn parse_scene_text(content: &str) -> anyhow::Result<ParsedScene> {
             let id = extract_quoted_attr(trimmed, "id").unwrap_or_default();
 
             sub_resources.push(SubResource { id, resource_type });
+            i += 1;
+            continue;
         }
 
         // Node: [node name="Name" type="Type" parent="."]
@@ -98,11 +120,29 @@ pub fn parse_scene_text(content: &str) -> anyhow::Result<ParsedScene> {
             let node_type = extract_quoted_attr(trimmed, "type").unwrap_or_default();
             let parent = extract_quoted_attr(trimmed, "parent");
 
+            // Collect properties (lines after [node ...] until next section or blank line)
+            let mut properties = Vec::new();
+            i += 1;
+            while i < lines.len() {
+                let prop_line = lines[i].trim();
+                if prop_line.is_empty() || prop_line.starts_with('[') {
+                    break;
+                }
+                if let Some(eq_pos) = prop_line.find(" = ") {
+                    let key = prop_line[..eq_pos].to_string();
+                    let value = prop_line[eq_pos + 3..].to_string();
+                    properties.push(NodeProperty { key, value });
+                }
+                i += 1;
+            }
+
             nodes.push(SceneNode {
                 name,
                 node_type,
                 parent,
+                properties,
             });
+            continue;
         }
 
         // Connection: [connection signal="pressed" from="..." to="." method="..."]
@@ -119,6 +159,8 @@ pub fn parse_scene_text(content: &str) -> anyhow::Result<ParsedScene> {
                 method,
             });
         }
+
+        i += 1;
     }
 
     Ok(ParsedScene {
@@ -128,7 +170,594 @@ pub fn parse_scene_text(content: &str) -> anyhow::Result<ParsedScene> {
         sub_resources,
         nodes,
         connections,
+        raw: Some(content.to_string()),
     })
+}
+
+/// Generate a minimal .tscn scene with just a root node.
+pub fn generate_minimal_scene(root_type: &str, uid: &str) -> String {
+    format!(
+        "[gd_scene format=3 uid=\"{}\"]\n\n[node name=\"{}\" type=\"{}\"]\n",
+        uid, root_type, root_type
+    )
+}
+
+/// Generate a Godot-style UID like "uid://abc123xyz".
+/// Uses random bytes encoded in a base62-like alphabet matching Godot's format.
+pub fn generate_uid() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+
+    // Simple LCG PRNG seeded from current time — good enough for UIDs
+    let mut state = seed;
+    let charset = b"abcdefghijklmnopqrstuvwxyz0123456789";
+    let mut id = String::with_capacity(13);
+
+    for _ in 0..13 {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+        let idx = ((state >> 33) as usize) % charset.len();
+        id.push(charset[idx] as char);
+    }
+
+    format!("uid://{}", id)
+}
+
+/// Serialize a ParsedScene back to .tscn text.
+#[allow(dead_code)]
+pub fn write_scene(scene: &ParsedScene) -> String {
+    let mut out = String::new();
+
+    // Header
+    let load_steps = scene.ext_resources.len() + scene.sub_resources.len();
+    if load_steps > 0 {
+        out.push_str(&format!(
+            "[gd_scene load_steps={} format={}",
+            load_steps + 1,
+            scene.format
+        ));
+    } else {
+        out.push_str(&format!("[gd_scene format={}", scene.format));
+    }
+    if let Some(ref uid) = scene.uid {
+        out.push_str(&format!(" uid=\"{}\"", uid));
+    }
+    out.push_str("]\n");
+
+    // Ext resources
+    for ext in &scene.ext_resources {
+        out.push('\n');
+        out.push_str(&format!("[ext_resource type=\"{}\"", ext.resource_type));
+        if let Some(ref uid) = ext.uid {
+            out.push_str(&format!(" uid=\"{}\"", uid));
+        }
+        out.push_str(&format!(" path=\"{}\" id=\"{}\"]", ext.path, ext.id));
+        out.push('\n');
+    }
+
+    // Sub resources
+    for sub in &scene.sub_resources {
+        out.push('\n');
+        out.push_str(&format!(
+            "[sub_resource type=\"{}\" id=\"{}\"]\n",
+            sub.resource_type, sub.id
+        ));
+    }
+
+    // Nodes
+    for node in &scene.nodes {
+        out.push('\n');
+        out.push_str(&format!("[node name=\"{}\"", node.name));
+        if !node.node_type.is_empty() {
+            out.push_str(&format!(" type=\"{}\"", node.node_type));
+        }
+        if let Some(ref parent) = node.parent {
+            out.push_str(&format!(" parent=\"{}\"", parent));
+        }
+        out.push_str("]\n");
+
+        for prop in &node.properties {
+            out.push_str(&format!("{} = {}\n", prop.key, prop.value));
+        }
+    }
+
+    // Connections
+    for conn in &scene.connections {
+        out.push('\n');
+        out.push_str(&format!(
+            "[connection signal=\"{}\" from=\"{}\" to=\"{}\" method=\"{}\"]\n",
+            conn.signal, conn.from, conn.to, conn.method
+        ));
+    }
+
+    out
+}
+
+/// Compute the node path for a given node within the scene tree.
+/// Root node (no parent) returns ".", children of root return their name,
+/// deeper nodes return "ParentName/ChildName".
+#[allow(dead_code)]
+pub fn node_path(scene: &ParsedScene, node_name: &str) -> Option<String> {
+    // Find the node
+    let node = scene.nodes.iter().find(|n| n.name == node_name)?;
+    if let Some(parent) = &node.parent {
+        Some(parent.clone() + "/" + &node.name)
+    } else {
+        // Root node
+        Some(".".to_string())
+    }
+}
+
+/// Get the tree path to use as a parent reference for children of the given node.
+/// For the root node, returns "."; for others, builds the full path.
+pub fn parent_path_for(scene: &ParsedScene, node_name: &str) -> Option<String> {
+    let node = scene.nodes.iter().find(|n| n.name == node_name)?;
+    if let Some(parent) = &node.parent {
+        if parent == "." {
+            Some(node.name.clone())
+        } else {
+            Some(format!("{}/{}", parent, node.name))
+        }
+    } else {
+        // This is the root — children use "." as parent
+        Some(".".to_string())
+    }
+}
+
+/// Generate a short random ext_resource ID like "1_abc5x".
+fn generate_ext_resource_id(index: usize) -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+
+    let charset = b"abcdefghijklmnopqrstuvwxyz0123456789";
+    let mut state = seed.wrapping_add(index as u128);
+    let mut suffix = String::with_capacity(5);
+
+    for _ in 0..5 {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+        let idx = ((state >> 33) as usize) % charset.len();
+        suffix.push(charset[idx] as char);
+    }
+
+    format!("{}_{}", index + 1, suffix)
+}
+
+/// Add a node to a parsed scene. Returns the modified scene.
+/// Operates on the raw text for faithful round-tripping.
+pub fn add_node_to_file(
+    path: &Path,
+    node_type: &str,
+    node_name: &str,
+    parent: Option<&str>,
+    script: Option<&str>,
+    props: &[(String, String)],
+) -> anyhow::Result<()> {
+    let content = fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))?;
+
+    let scene = parse_scene_text(&content)?;
+
+    // Check for duplicate node name
+    if scene.nodes.iter().any(|n| n.name == node_name) {
+        anyhow::bail!("Node '{}' already exists in scene", node_name);
+    }
+
+    // Determine parent path
+    let parent_ref = if let Some(p) = parent {
+        // Find the parent node and compute its path for child references
+        if p == "." || scene.nodes.first().map(|n| n.name.as_str()) == Some(p) {
+            ".".to_string()
+        } else {
+            parent_path_for(&scene, p)
+                .ok_or_else(|| anyhow::anyhow!("Parent node '{}' not found in scene", p))?
+        }
+    } else {
+        // Default to root
+        ".".to_string()
+    };
+
+    let mut new_content = content.clone();
+
+    // If script is specified, add an ext_resource for it
+    let script_ext_id = if let Some(script_path) = script {
+        let ext_id = generate_ext_resource_id(scene.ext_resources.len());
+        let ext_line = format!(
+            "\n[ext_resource type=\"Script\" path=\"{}\" id=\"{}\"]\n",
+            script_path, ext_id
+        );
+
+        // Insert after last ext_resource, or after the header line
+        let insert_pos = find_ext_resource_insert_pos(&new_content);
+        new_content.insert_str(insert_pos, &ext_line);
+
+        // Update load_steps in header
+        new_content = update_load_steps(&new_content);
+
+        Some(ext_id)
+    } else {
+        None
+    };
+
+    // Build the node section
+    let mut node_section = format!("\n[node name=\"{}\" type=\"{}\"", node_name, node_type);
+    node_section.push_str(&format!(" parent=\"{}\"]\n", parent_ref));
+
+    if let Some(ext_id) = &script_ext_id {
+        node_section.push_str(&format!("script = ExtResource(\"{}\")\n", ext_id));
+    }
+
+    for (key, value) in props {
+        node_section.push_str(&format!("{} = {}\n", key, value));
+    }
+
+    // Insert before connections section, or at end
+    let insert_pos = find_node_insert_pos(&new_content);
+    new_content.insert_str(insert_pos, &node_section);
+
+    atomic_write(path, &new_content)
+}
+
+/// Remove a node and its children from a .tscn file.
+pub fn remove_node_from_file(path: &Path, node_name: &str) -> anyhow::Result<Vec<String>> {
+    let content = fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))?;
+
+    let scene = parse_scene_text(&content)?;
+
+    // Verify node exists and is not the root
+    let target = scene
+        .nodes
+        .iter()
+        .find(|n| n.name == node_name)
+        .ok_or_else(|| anyhow::anyhow!("Node '{}' not found in scene", node_name))?;
+
+    if target.parent.is_none() {
+        anyhow::bail!("Cannot remove root node '{}'", node_name);
+    }
+
+    // Find all nodes to remove (target + descendants)
+    let target_path = parent_path_for(&scene, node_name).unwrap_or_else(|| node_name.to_string());
+    let mut names_to_remove = vec![node_name.to_string()];
+
+    // Find children recursively by checking parent paths
+    for node in &scene.nodes {
+        if let Some(ref p) = node.parent {
+            if p == &target_path || p.starts_with(&format!("{}/", target_path)) {
+                names_to_remove.push(node.name.clone());
+            }
+        }
+    }
+
+    // Collect ext_resource IDs used only by removed nodes
+    let mut ext_ids_used_by_removed: Vec<String> = Vec::new();
+    let mut ext_ids_used_by_kept: Vec<String> = Vec::new();
+
+    for node in &scene.nodes {
+        let is_removed = names_to_remove.contains(&node.name);
+        for prop in &node.properties {
+            if let Some(ext_id) = extract_ext_resource_ref(&prop.value) {
+                if is_removed {
+                    ext_ids_used_by_removed.push(ext_id);
+                } else {
+                    ext_ids_used_by_kept.push(ext_id);
+                }
+            }
+        }
+    }
+
+    let orphaned_ext_ids: Vec<&String> = ext_ids_used_by_removed
+        .iter()
+        .filter(|id| !ext_ids_used_by_kept.contains(id))
+        .collect();
+
+    // Remove sections from raw text
+    let lines: Vec<&str> = content.lines().collect();
+    let mut result_lines: Vec<&str> = Vec::new();
+    let mut skip = false;
+    let mut skip_blank_after = false;
+
+    let mut i = 0;
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+
+        // Check if this is a node section to remove
+        if trimmed.starts_with("[node ") {
+            let name = extract_quoted_attr(trimmed, "name").unwrap_or_default();
+            if names_to_remove.contains(&name) {
+                skip = true;
+                skip_blank_after = true;
+                i += 1;
+                continue;
+            }
+        }
+
+        // Check if this is an ext_resource to remove
+        if trimmed.starts_with("[ext_resource ") {
+            let id = extract_quoted_attr(trimmed, "id").unwrap_or_default();
+            if orphaned_ext_ids.iter().any(|eid| **eid == id) {
+                skip = true;
+                skip_blank_after = true;
+                i += 1;
+                continue;
+            }
+        }
+
+        // New section starts — stop skipping
+        if trimmed.starts_with('[') && skip {
+            skip = false;
+            skip_blank_after = false;
+        }
+
+        if skip {
+            i += 1;
+            continue;
+        }
+
+        // Skip blank lines that followed removed sections
+        if skip_blank_after && trimmed.is_empty() {
+            skip_blank_after = false;
+            i += 1;
+            continue;
+        }
+        skip_blank_after = false;
+
+        result_lines.push(lines[i]);
+        i += 1;
+    }
+
+    let new_content = result_lines.join("\n");
+    // Ensure trailing newline
+    let new_content = if new_content.ends_with('\n') {
+        new_content
+    } else {
+        new_content + "\n"
+    };
+
+    let new_content = update_load_steps(&new_content);
+    atomic_write(path, &new_content)?;
+
+    Ok(names_to_remove)
+}
+
+/// Edit a node property in a .tscn file.
+/// `node_name` is the node to edit, `property` is the key, `value` is the new value.
+pub fn edit_node_property(
+    path: &Path,
+    node_name: &str,
+    property: &str,
+    value: &str,
+) -> anyhow::Result<()> {
+    let content = fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))?;
+
+    let scene = parse_scene_text(&content)?;
+
+    // Verify node exists
+    if !scene.nodes.iter().any(|n| n.name == node_name) {
+        anyhow::bail!("Node '{}' not found in scene", node_name);
+    }
+
+    let lines: Vec<&str> = content.lines().collect();
+    let mut result: Vec<String> = Vec::new();
+    let mut i = 0;
+    let mut found_and_set = false;
+
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+
+        if trimmed.starts_with("[node ") {
+            let name = extract_quoted_attr(trimmed, "name").unwrap_or_default();
+            result.push(lines[i].to_string());
+            i += 1;
+
+            if name == node_name {
+                // We're inside the target node — look for existing property
+                let mut property_set = false;
+                while i < lines.len() {
+                    let prop_trimmed = lines[i].trim();
+                    if prop_trimmed.is_empty() || prop_trimmed.starts_with('[') {
+                        break;
+                    }
+                    if prop_trimmed.starts_with(&format!("{} = ", property)) {
+                        // Replace existing property
+                        result.push(format!("{} = {}", property, value));
+                        property_set = true;
+                        found_and_set = true;
+                    } else {
+                        result.push(lines[i].to_string());
+                    }
+                    i += 1;
+                }
+                if !property_set {
+                    // Add new property before the blank line / next section
+                    result.push(format!("{} = {}", property, value));
+                    found_and_set = true;
+                }
+                continue;
+            }
+        } else {
+            result.push(lines[i].to_string());
+            i += 1;
+        }
+    }
+
+    if !found_and_set {
+        anyhow::bail!(
+            "Failed to set property '{}' on node '{}'",
+            property,
+            node_name
+        );
+    }
+
+    let new_content = result.join("\n");
+    let new_content = if new_content.ends_with('\n') {
+        new_content
+    } else {
+        new_content + "\n"
+    };
+
+    atomic_write(path, &new_content)
+}
+
+/// Extract an ExtResource ID from a value like `ExtResource("1_abc")`.
+fn extract_ext_resource_ref(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.starts_with("ExtResource(\"") && trimmed.ends_with("\")") {
+        Some(trimmed[13..trimmed.len() - 2].to_string())
+    } else {
+        None
+    }
+}
+
+/// Find insertion position for new ext_resources (after last ext_resource or header).
+fn find_ext_resource_insert_pos(content: &str) -> usize {
+    let mut last_ext_end = None;
+    let mut header_end = None;
+
+    for (i, line) in content.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("[gd_scene ") {
+            header_end = Some(i);
+        }
+        if trimmed.starts_with("[ext_resource ") {
+            last_ext_end = Some(i);
+        }
+    }
+
+    let target_line = last_ext_end.or(header_end).unwrap_or(0);
+
+    // Find byte position at end of target line
+    let mut byte_pos = 0;
+    for (i, line) in content.lines().enumerate() {
+        byte_pos += line.len() + 1; // +1 for newline
+        if i == target_line {
+            return byte_pos;
+        }
+    }
+    content.len()
+}
+
+/// Find insertion position for new nodes (before connections or at end).
+fn find_node_insert_pos(content: &str) -> usize {
+    // Insert before first [connection] if present, otherwise at end
+    if let Some(pos) = content.find("\n[connection ") {
+        return pos;
+    }
+    content.len()
+}
+
+/// Update the load_steps count in the header based on actual ext_resource + sub_resource count.
+fn update_load_steps(content: &str) -> String {
+    let mut ext_count = 0;
+    let mut sub_count = 0;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("[ext_resource ") {
+            ext_count += 1;
+        }
+        if trimmed.starts_with("[sub_resource ") {
+            sub_count += 1;
+        }
+    }
+
+    let total = ext_count + sub_count;
+
+    // Find and replace/add load_steps in header
+    let mut result = String::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("[gd_scene ") {
+            // Rebuild header
+            let format_val = extract_attr(trimmed, "format").unwrap_or_else(|| "3".into());
+            let uid_val = extract_quoted_attr(trimmed, "uid");
+
+            if total > 0 {
+                result.push_str(&format!(
+                    "[gd_scene load_steps={} format={}",
+                    total + 1,
+                    format_val
+                ));
+            } else {
+                result.push_str(&format!("[gd_scene format={}", format_val));
+            }
+            if let Some(uid) = uid_val {
+                result.push_str(&format!(" uid=\"{}\"", uid));
+            }
+            result.push_str("]\n");
+        } else {
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+
+    // Remove potential trailing extra newline from the loop
+    if result.ends_with("\n\n") && !content.ends_with("\n\n") {
+        result.pop();
+    }
+
+    result
+}
+
+/// Write content to a file atomically (write to temp, then rename).
+pub fn atomic_write(path: &Path, content: &str) -> anyhow::Result<()> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let temp_path = dir.join(format!(".gdcli_tmp_{}", std::process::id()));
+
+    fs::write(&temp_path, content)
+        .map_err(|e| anyhow::anyhow!("Failed to write temp file {}: {}", temp_path.display(), e))?;
+
+    fs::rename(&temp_path, path).map_err(|e| {
+        // Clean up temp file on rename failure
+        let _ = fs::remove_file(&temp_path);
+        anyhow::anyhow!(
+            "Failed to rename {} to {}: {}",
+            temp_path.display(),
+            path.display(),
+            e
+        )
+    })?;
+
+    Ok(())
+}
+
+/// Parse simple property values for the --props flag.
+/// Handles: booleans, integers, floats, strings, and Godot types passed through verbatim.
+pub fn format_prop_value(value: &str) -> String {
+    // Boolean
+    if value == "true" || value == "false" {
+        return value.to_string();
+    }
+
+    // Integer
+    if value.parse::<i64>().is_ok() {
+        return value.to_string();
+    }
+
+    // Float
+    if value.parse::<f64>().is_ok() {
+        return value.to_string();
+    }
+
+    // Godot types: Vector2(...), Vector3(...), Color(...), etc. — pass through
+    if value.contains('(') && value.contains(')') {
+        return value.to_string();
+    }
+
+    // res:// paths
+    if value.starts_with("res://") {
+        return format!("\"{}\"", value);
+    }
+
+    // Plain string — quote it
+    format!("\"{}\"", value)
 }
 
 /// Extract a quoted attribute value from a bracket line.
@@ -221,11 +850,97 @@ text = "Click me"
     }
 
     #[test]
+    fn test_parse_node_properties() {
+        let content = r#"[gd_scene format=3]
+
+[node name="Root" type="Node2D"]
+position = Vector2(100, 200)
+visible = false
+"#;
+        let scene = parse_scene_text(content).unwrap();
+        assert_eq!(scene.nodes[0].properties.len(), 2);
+        assert_eq!(scene.nodes[0].properties[0].key, "position");
+        assert_eq!(scene.nodes[0].properties[0].value, "Vector2(100, 200)");
+        assert_eq!(scene.nodes[0].properties[1].key, "visible");
+        assert_eq!(scene.nodes[0].properties[1].value, "false");
+    }
+
+    #[test]
     fn test_extract_quoted_attr() {
         let line = r#"[node name="Main" type="Node2D" parent="."]"#;
         assert_eq!(extract_quoted_attr(line, "name").as_deref(), Some("Main"));
         assert_eq!(extract_quoted_attr(line, "type").as_deref(), Some("Node2D"));
         assert_eq!(extract_quoted_attr(line, "parent").as_deref(), Some("."));
         assert_eq!(extract_quoted_attr(line, "missing"), None);
+    }
+
+    #[test]
+    fn test_generate_minimal_scene() {
+        let scene = generate_minimal_scene("CharacterBody2D", "uid://test123");
+        assert!(scene.contains("[gd_scene format=3 uid=\"uid://test123\"]"));
+        assert!(scene.contains("[node name=\"CharacterBody2D\" type=\"CharacterBody2D\"]"));
+    }
+
+    #[test]
+    fn test_write_scene_roundtrip() {
+        let content = r#"[gd_scene format=3 uid="uid://abc"]
+
+[node name="Root" type="Node2D"]
+
+[node name="Child" type="Sprite2D" parent="."]
+"#;
+        let scene = parse_scene_text(content).unwrap();
+        let written = write_scene(&scene);
+        assert!(written.contains("[gd_scene format=3 uid=\"uid://abc\"]"));
+        assert!(written.contains("[node name=\"Root\" type=\"Node2D\"]"));
+        assert!(written.contains("[node name=\"Child\" type=\"Sprite2D\" parent=\".\"]"));
+    }
+
+    #[test]
+    fn test_format_prop_value() {
+        assert_eq!(format_prop_value("true"), "true");
+        assert_eq!(format_prop_value("42"), "42");
+        assert_eq!(format_prop_value("3.14"), "3.14");
+        assert_eq!(format_prop_value("Vector2(1, 2)"), "Vector2(1, 2)");
+        assert_eq!(format_prop_value("res://foo.gd"), "\"res://foo.gd\"");
+        assert_eq!(format_prop_value("hello"), "\"hello\"");
+    }
+
+    #[test]
+    fn test_generate_uid() {
+        let uid = generate_uid();
+        assert!(uid.starts_with("uid://"));
+        assert!(uid.len() > 10);
+    }
+
+    #[test]
+    fn test_extract_ext_resource_ref() {
+        assert_eq!(
+            extract_ext_resource_ref("ExtResource(\"1_abc\")"),
+            Some("1_abc".to_string())
+        );
+        assert_eq!(extract_ext_resource_ref("42"), None);
+    }
+
+    #[test]
+    fn test_parent_path_for() {
+        let content = r#"[gd_scene format=3]
+
+[node name="Root" type="Node2D"]
+
+[node name="Player" type="CharacterBody2D" parent="."]
+
+[node name="Sprite" type="Sprite2D" parent="Player"]
+"#;
+        let scene = parse_scene_text(content).unwrap();
+        assert_eq!(parent_path_for(&scene, "Root"), Some(".".to_string()));
+        assert_eq!(
+            parent_path_for(&scene, "Player"),
+            Some("Player".to_string())
+        );
+        assert_eq!(
+            parent_path_for(&scene, "Sprite"),
+            Some("Player/Sprite".to_string())
+        );
     }
 }

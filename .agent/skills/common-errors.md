@@ -47,7 +47,6 @@ Error message patterns from gdcli output, their likely causes, and fixes.
 
 | Message | Meaning | Action |
 |---|---|---|
-| `--structured-errors NOT supported` | The Godot binary doesn't have the gdcli patch. | Set `GODOT_PATH` to point to a patched Godot build. |
 | `project.godot not found in current directory` | gdcli was run outside a Godot project root. | `cd` to the directory containing `project.godot`. |
 | `Process timed out after Xs` | Godot didn't exit within the timeout. For `run`, this means the script didn't call `quit()`. | Add `quit()` at the end of headless scripts. Increase `--timeout` for long-running operations. |
 | `Could not find a Godot binary` | No Godot found via `GODOT_PATH`, PATH, or common locations. | Set `GODOT_PATH=C:\path\to\godot.console.exe`. |

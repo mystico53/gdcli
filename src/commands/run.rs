@@ -24,13 +24,6 @@ pub fn run_project(
     scene: Option<&str>,
     json_mode: bool,
 ) -> Result<bool> {
-    if !godot_info.structured_errors_supported {
-        bail!(
-            "Your Godot build does not support --structured-errors.\n\
-             gdcli requires a patched Godot build."
-        );
-    }
-
     if !Path::new("project.godot").is_file() {
         bail!(
             "project.godot not found in current directory.\n\
@@ -48,7 +41,7 @@ pub fn run_project(
     let result = runner::run(&godot_info.path, &args, timeout)?;
 
     let all_output = format!("{}\n{}", result.stdout, result.stderr);
-    let errors = errors::parse_errors(&all_output);
+    let errors = errors::parse_script_errors(&all_output);
     let error_count = errors.len();
     let ok = result.exit_code == 0 && error_count == 0 && !result.timed_out;
 

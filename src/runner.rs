@@ -13,15 +13,14 @@ pub struct RunResult {
     pub timed_out: bool,
 }
 
-/// Run Godot with `--headless --structured-errors` prepended to the given args.
+/// Run Godot with `--headless` prepended to the given args.
 pub fn run(godot_path: &Path, args: &[&str], timeout_secs: u64) -> Result<RunResult> {
-    let mut full_args = vec!["--headless", "--structured-errors"];
+    let mut full_args = vec!["--headless"];
     full_args.extend_from_slice(args);
     run_raw(godot_path, &full_args, timeout_secs)
 }
 
 /// Run Godot with exactly the given args (no flags prepended).
-/// Used for version probing before we know if --structured-errors is supported.
 pub fn run_raw(godot_path: &Path, args: &[&str], timeout_secs: u64) -> Result<RunResult> {
     let start = Instant::now();
 

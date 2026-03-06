@@ -1,9 +1,64 @@
 use anyhow::{bail, Result};
 use serde::Serialize;
+use std::fs;
 use std::path::Path;
 
 use crate::output;
 use crate::scene_parser;
+
+// --- scene create ---
+
+#[derive(Serialize)]
+pub struct SceneCreateReport {
+    pub path: String,
+    pub root_type: String,
+    pub uid: String,
+}
+
+pub fn run_create(scene_path: &str, root_type: &str, force: bool, json_mode: bool) -> Result<bool> {
+    let path = Path::new(scene_path);
+
+    if path.is_file() && !force {
+        bail!(
+            "File already exists: {}\nUse --force to overwrite.",
+            scene_path
+        );
+    }
+
+    // Create parent directories if needed
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
+    let uid = scene_parser::generate_uid();
+    let content = scene_parser::generate_minimal_scene(root_type, &uid);
+
+    scene_parser::atomic_write(path, &content)?;
+
+    if json_mode {
+        let report = SceneCreateReport {
+            path: scene_path.to_string(),
+            root_type: root_type.to_string(),
+            uid: uid.clone(),
+        };
+        let envelope = output::JsonEnvelope {
+            ok: true,
+            command: "scene create".into(),
+            data: Some(report),
+            error: None,
+        };
+        output::emit_json(&envelope);
+    } else {
+        println!(
+            "  \u{2713} Created {} (root: {}, uid: {})",
+            scene_path, root_type, uid
+        );
+    }
+
+    Ok(true)
+}
 
 // --- scene list ---
 
@@ -167,4 +222,79 @@ pub fn run_validate(scene_path: &str, json_mode: bool) -> Result<bool> {
     }
 
     Ok(clean)
+}
+
+// --- scene edit ---
+
+#[derive(Serialize)]
+pub struct SceneEditReport {
+    pub scene: String,
+    pub edits: Vec<EditEntry>,
+}
+
+#[derive(Serialize)]
+pub struct EditEntry {
+    pub node: String,
+    pub property: String,
+    pub value: String,
+}
+
+pub fn run_edit(scene_path: &str, set_args: &[String], json_mode: bool) -> Result<bool> {
+    let path = Path::new(scene_path);
+    if !path.is_file() {
+        bail!("Scene file not found: {}", scene_path);
+    }
+
+    let mut edits = Vec::new();
+
+    for set_arg in set_args {
+        // Parse "NodeName::property=value"
+        let parts: Vec<&str> = set_arg.splitn(2, "::").collect();
+        if parts.len() != 2 {
+            bail!(
+                "Invalid --set format: '{}'\nExpected: NodeName::property=value",
+                set_arg
+            );
+        }
+        let node_name = parts[0];
+        let prop_parts: Vec<&str> = parts[1].splitn(2, '=').collect();
+        if prop_parts.len() != 2 {
+            bail!(
+                "Invalid --set format: '{}'\nExpected: NodeName::property=value",
+                set_arg
+            );
+        }
+        let property = prop_parts[0];
+        let raw_value = prop_parts[1];
+        let value = scene_parser::format_prop_value(raw_value);
+
+        scene_parser::edit_node_property(path, node_name, property, &value)?;
+
+        edits.push(EditEntry {
+            node: node_name.to_string(),
+            property: property.to_string(),
+            value,
+        });
+    }
+
+    if json_mode {
+        let report = SceneEditReport {
+            scene: scene_path.to_string(),
+            edits,
+        };
+        let envelope = output::JsonEnvelope {
+            ok: true,
+            command: "scene edit".into(),
+            data: Some(report),
+            error: None,
+        };
+        output::emit_json(&envelope);
+    } else {
+        println!("  \u{2713} Edited {}", scene_path);
+        for edit in &edits {
+            println!("    {}::{} = {}", edit.node, edit.property, edit.value);
+        }
+    }
+
+    Ok(true)
 }

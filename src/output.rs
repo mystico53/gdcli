@@ -1,5 +1,6 @@
 use colored::Colorize;
 use serde::Serialize;
+use std::cell::RefCell;
 use std::io::IsTerminal;
 
 #[derive(Serialize)]
@@ -17,10 +18,35 @@ pub fn use_json(flag: bool) -> bool {
     flag || !std::io::stdout().is_terminal()
 }
 
-/// Emit a JSON envelope to stdout.
+// --- MCP stdout capture ---
+
+thread_local! {
+    static CAPTURE_BUF: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// Start capturing emit_json output into a buffer instead of stdout.
+pub fn begin_capture() {
+    CAPTURE_BUF.with(|buf| {
+        *buf.borrow_mut() = Some(String::new());
+    });
+}
+
+/// Stop capturing and return whatever was captured.
+pub fn end_capture() -> String {
+    CAPTURE_BUF.with(|buf| buf.borrow_mut().take().unwrap_or_default())
+}
+
+/// Emit a JSON envelope to stdout (or capture buffer if active).
 pub fn emit_json<T: Serialize>(envelope: &JsonEnvelope<T>) {
     if let Ok(json) = serde_json::to_string_pretty(envelope) {
-        println!("{json}");
+        CAPTURE_BUF.with(|buf| {
+            let mut b = buf.borrow_mut();
+            if let Some(ref mut s) = *b {
+                s.push_str(&json);
+            } else {
+                println!("{json}");
+            }
+        });
     }
 }
 

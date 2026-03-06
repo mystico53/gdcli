@@ -1,11 +1,100 @@
 use anyhow::{bail, Result};
 use serde::Serialize;
+use std::fs;
 use std::path::Path;
 
 use crate::errors::{self, GodotError};
 use crate::godot_finder::GodotInfo;
 use crate::output;
 use crate::runner;
+use crate::scene_parser;
+
+// --- script create ---
+
+#[derive(Serialize)]
+pub struct ScriptCreateReport {
+    pub path: String,
+    pub extends: String,
+    pub methods: Vec<String>,
+}
+
+/// Known method signatures for common Godot lifecycle methods.
+fn method_signature(name: &str) -> &str {
+    match name {
+        "_ready" => "func _ready() -> void:\n\tpass",
+        "_process" => "func _process(delta: float) -> void:\n\tpass",
+        "_physics_process" => "func _physics_process(delta: float) -> void:\n\tpass",
+        "_input" => "func _input(event: InputEvent) -> void:\n\tpass",
+        "_unhandled_input" => "func _unhandled_input(event: InputEvent) -> void:\n\tpass",
+        "_enter_tree" => "func _enter_tree() -> void:\n\tpass",
+        "_exit_tree" => "func _exit_tree() -> void:\n\tpass",
+        _ => "",
+    }
+}
+
+pub fn run_create(
+    script_path: &str,
+    extends: &str,
+    methods: &[String],
+    force: bool,
+    json_mode: bool,
+) -> Result<bool> {
+    let path = Path::new(script_path);
+
+    if path.is_file() && !force {
+        bail!(
+            "File already exists: {}\nUse --force to overwrite.",
+            script_path
+        );
+    }
+
+    // Create parent directories if needed
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
+    let mut content = format!("extends {}\n", extends);
+
+    for method_name in methods {
+        let sig = method_signature(method_name);
+        if sig.is_empty() {
+            // Unknown method — generate a basic stub
+            content.push_str(&format!("\n\nfunc {}() -> void:\n\tpass", method_name));
+        } else {
+            content.push_str(&format!("\n\n{}", sig));
+        }
+    }
+
+    content.push('\n');
+
+    scene_parser::atomic_write(path, &content)?;
+
+    if json_mode {
+        let report = ScriptCreateReport {
+            path: script_path.to_string(),
+            extends: extends.to_string(),
+            methods: methods.to_vec(),
+        };
+        let envelope = output::JsonEnvelope {
+            ok: true,
+            command: "script create".into(),
+            data: Some(report),
+            error: None,
+        };
+        output::emit_json(&envelope);
+    } else {
+        println!("  \u{2713} Created {} (extends {})", script_path, extends);
+        if !methods.is_empty() {
+            println!("    methods: {}", methods.join(", "));
+        }
+    }
+
+    Ok(true)
+}
+
+// --- script lint ---
 
 #[derive(Serialize)]
 pub struct LintReport {
@@ -15,30 +104,14 @@ pub struct LintReport {
 }
 
 pub fn run_lint(godot_info: &GodotInfo, file: Option<&str>, json_mode: bool) -> Result<bool> {
-    if !godot_info.structured_errors_supported {
-        bail!(
-            "Your Godot build does not support --structured-errors.\n\
-             gdcli requires a patched Godot build.\n\
-             Set GODOT_PATH to point to your patched binary."
-        );
-    }
-
-    let (result, use_script_errors) = if let Some(file_path) = file {
-        (lint_single_file(godot_info, file_path)?, true)
+    let result = if let Some(file_path) = file {
+        lint_single_file(godot_info, file_path)?
     } else {
-        (lint_project(godot_info)?, false)
+        lint_project(godot_info)?
     };
 
     let all_output = format!("{}\n{}", result.stdout, result.stderr);
-
-    // Single-file lint uses --check-only WITHOUT --structured-errors
-    // (because --structured-errors implies -d which prevents --check-only from exiting).
-    // Project-wide lint uses --structured-errors --quit normally.
-    let errors = if use_script_errors {
-        errors::parse_script_errors(&all_output)
-    } else {
-        errors::parse_errors(&all_output)
-    };
+    let errors = errors::parse_script_errors(&all_output);
 
     let error_count = errors.len();
     let clean = error_count == 0;
@@ -79,8 +152,6 @@ pub fn run_lint(godot_info: &GodotInfo, file: Option<&str>, json_mode: bool) -> 
 }
 
 /// Lint a single file using `--check-only -s <file>`.
-/// Uses `--headless` but NOT `--structured-errors` because the latter implies `-d`
-/// which prevents `--check-only` from exiting. We parse SCRIPT ERROR blocks instead.
 fn lint_single_file(godot_info: &GodotInfo, file_path: &str) -> Result<runner::RunResult> {
     if !Path::new(file_path).is_file() {
         bail!("File not found: {}", file_path);
@@ -101,7 +172,6 @@ fn lint_single_file(godot_info: &GodotInfo, file_path: &str) -> Result<runner::R
 }
 
 /// Lint the whole project by loading it with `--quit`.
-/// Uses `--structured-errors` for clean error parsing.
 fn lint_project(godot_info: &GodotInfo) -> Result<runner::RunResult> {
     if !Path::new("project.godot").is_file() {
         bail!(
