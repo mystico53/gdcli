@@ -10,6 +10,20 @@ gdcli gives coding agents (and you) a structured, scriptable interface to Godot 
 - **MCP server** — exposes all commands as tools for Claude, Cursor, Cline, and other MCP clients
 - **JSON by default** — auto-detects piped output and switches to structured JSON
 
+## Add to your agent
+
+**Claude Code:**
+```bash
+claude mcp add --transport stdio gdcli -- gdcli mcp
+```
+
+**Cursor / VS Code / other MCP clients** — add to your MCP config:
+```json
+{ "mcpServers": { "gdcli": { "command": "gdcli", "args": ["mcp"] } } }
+```
+
+gdcli must be on your PATH first — see [Install](#install) below.
+
 ### Why gdcli over godot-mcp
 
 Most Godot AI tooling runs everything through a Godot subprocess — every scene edit, every node addition, every property change spawns the engine. gdcli parses `.tscn` files directly, so the operations that agents call most often (add node, edit property, wire a texture) are instant filesystem I/O.
@@ -37,12 +51,6 @@ Most Godot AI tooling runs everything through a Godot subprocess — every scene
 
 Grab the latest release for your platform from the [Releases page](https://github.com/mystico53/gdcli/releases/latest) — Windows, Linux, and macOS (universal) binaries are available. Extract and add to your PATH.
 
-**Via npm (no Rust needed):**
-
-```sh
-npm install -g gdcli-godot
-```
-
 **From source:**
 
 ```sh
@@ -60,35 +68,6 @@ curl -fsSL https://raw.githubusercontent.com/mystico53/gdcli/main/install.sh | s
 ```powershell
 irm https://raw.githubusercontent.com/mystico53/gdcli/main/install.ps1 | iex
 ```
-
-## Add to your AI agent
-
-**Claude Code:**
-
-```bash
-claude mcp add --transport stdio gdcli -- gdcli mcp
-```
-
-**Cursor / VS Code / other MCP clients** — add to your MCP config:
-
-```json
-{
-  "mcpServers": {
-    "gdcli": {
-      "command": "gdcli",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-**All agents at once** (Claude Code, Cursor, VS Code, Codex, and more):
-
-```bash
-npx add-mcp gdcli -- gdcli mcp
-```
-
-gdcli must be on your PATH first — see [Install](#install) above.
 
 ## Prerequisites
 
