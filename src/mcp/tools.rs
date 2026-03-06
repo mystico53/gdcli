@@ -27,6 +27,37 @@ pub fn all_tools() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
+            name: "project_init",
+            description: "Initialize a new Godot project (creates project.godot with config_version=5 and proper features). Auto-detects Godot version if installed.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Directory to create the project in (default: current directory)"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Project name (default: directory name)"
+                    },
+                    "godot_version": {
+                        "type": "string",
+                        "description": "Godot version e.g. \"4.6\" (auto-detected if Godot is installed)"
+                    },
+                    "renderer": {
+                        "type": "string",
+                        "description": "Renderer: forward_plus (default), mobile, or gl_compatibility"
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "Overwrite existing project.godot",
+                        "default": false
+                    }
+                },
+                "additionalProperties": false
+            }),
+        },
+        ToolDef {
             name: "scene_list",
             description: "List all .tscn scenes with node and resource counts",
             schema: json!({
@@ -43,7 +74,7 @@ pub fn all_tools() -> Vec<ToolDef> {
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Path to the .tscn file"
+                        "description": "Path to the .tscn file (accepts res:// paths)"
                     }
                 },
                 "required": ["path"],
@@ -58,7 +89,7 @@ pub fn all_tools() -> Vec<ToolDef> {
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Path for the new scene file"
+                        "description": "Path for the new scene file (accepts res:// paths)"
                     },
                     "root_type": {
                         "type": "string",
@@ -90,7 +121,7 @@ pub fn all_tools() -> Vec<ToolDef> {
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Path to the .tscn file"
+                        "description": "Path to the .tscn file (accepts res:// paths)"
                     },
                     "set": {
                         "type": "array",
@@ -110,7 +141,7 @@ pub fn all_tools() -> Vec<ToolDef> {
                 "properties": {
                     "scene": {
                         "type": "string",
-                        "description": "Path to the .tscn file"
+                        "description": "Path to the .tscn file (accepts res:// paths)"
                     },
                     "node_type": {
                         "type": "string",
@@ -163,7 +194,7 @@ pub fn all_tools() -> Vec<ToolDef> {
                 "properties": {
                     "scene": {
                         "type": "string",
-                        "description": "Path to the .tscn file"
+                        "description": "Path to the .tscn file (accepts res:// paths)"
                     },
                     "name": {
                         "type": "string",
@@ -197,7 +228,7 @@ pub fn all_tools() -> Vec<ToolDef> {
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Path for the new script file"
+                        "description": "Path for the new script file (accepts res:// paths)"
                     },
                     "extends": {
                         "type": "string",
@@ -227,7 +258,7 @@ pub fn all_tools() -> Vec<ToolDef> {
                 "properties": {
                     "file": {
                         "type": "string",
-                        "description": "Check a single file instead of the whole project"
+                        "description": "Check a single file instead of the whole project (accepts res:// paths)"
                     }
                 },
                 "additionalProperties": false
@@ -248,7 +279,7 @@ pub fn all_tools() -> Vec<ToolDef> {
                     },
                     "scene": {
                         "type": "string",
-                        "description": "Scene path to run (default: main scene)"
+                        "description": "Scene path to run (default: main scene, accepts res:// paths)"
                     }
                 },
                 "additionalProperties": false
@@ -267,7 +298,7 @@ pub fn all_tools() -> Vec<ToolDef> {
                     },
                     "scene": {
                         "type": "string",
-                        "description": "Scene path to run (default: main scene)"
+                        "description": "Scene path to run (default: main scene, accepts res:// paths)"
                     }
                 },
                 "additionalProperties": false
@@ -344,7 +375,7 @@ pub fn all_tools() -> Vec<ToolDef> {
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Path to the .tscn file"
+                        "description": "Path to the .tscn file (accepts res:// paths)"
                     },
                     "node": {
                         "type": "string",
@@ -363,7 +394,7 @@ pub fn all_tools() -> Vec<ToolDef> {
                 "properties": {
                     "scene": {
                         "type": "string",
-                        "description": "Path to the .tscn file"
+                        "description": "Path to the .tscn file (accepts res:// paths)"
                     },
                     "resource_type": {
                         "type": "string",
@@ -395,7 +426,7 @@ pub fn all_tools() -> Vec<ToolDef> {
                 "properties": {
                     "scene": {
                         "type": "string",
-                        "description": "Path to the .tscn file"
+                        "description": "Path to the .tscn file (accepts res:// paths)"
                     },
                     "id": {
                         "type": "string",
@@ -419,7 +450,7 @@ pub fn all_tools() -> Vec<ToolDef> {
                 "properties": {
                     "scene": {
                         "type": "string",
-                        "description": "Path to the .tscn file"
+                        "description": "Path to the .tscn file (accepts res:// paths)"
                     },
                     "name": {
                         "type": "string",
@@ -456,7 +487,7 @@ pub fn all_tools() -> Vec<ToolDef> {
                 "properties": {
                     "scene": {
                         "type": "string",
-                        "description": "Path to the .tscn file"
+                        "description": "Path to the .tscn file (accepts res:// paths)"
                     },
                     "signal": {
                         "type": "string",
@@ -487,7 +518,7 @@ pub fn all_tools() -> Vec<ToolDef> {
                 "properties": {
                     "scene": {
                         "type": "string",
-                        "description": "Path to the .tscn file"
+                        "description": "Path to the .tscn file (accepts res:// paths)"
                     },
                     "signal": {
                         "type": "string",

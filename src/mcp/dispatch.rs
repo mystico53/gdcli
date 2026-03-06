@@ -93,6 +93,12 @@ fn str_arg(args: &Value, key: &str) -> Option<String> {
     args.get(key).and_then(|v| v.as_str()).map(String::from)
 }
 
+/// Like `str_arg`, but strips a leading `res://` prefix so callers can pass
+/// Godot-style resource paths for filesystem-path arguments.
+fn path_arg(args: &Value, key: &str) -> Option<String> {
+    str_arg(args, key).map(|s| crate::project_util::strip_res_prefix(&s).to_string())
+}
+
 fn bool_arg(args: &Value, key: &str) -> bool {
     args.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
 }
@@ -120,13 +126,13 @@ fn dispatch_scene_list() -> anyhow::Result<bool> {
 
 fn dispatch_scene_validate(args: &Value) -> anyhow::Result<bool> {
     let path =
-        str_arg(args, "path").ok_or_else(|| anyhow::anyhow!("missing required arg: path"))?;
+        path_arg(args, "path").ok_or_else(|| anyhow::anyhow!("missing required arg: path"))?;
     commands::scene::run_validate(&path, true)
 }
 
 fn dispatch_scene_create(args: &Value) -> anyhow::Result<bool> {
     let path =
-        str_arg(args, "path").ok_or_else(|| anyhow::anyhow!("missing required arg: path"))?;
+        path_arg(args, "path").ok_or_else(|| anyhow::anyhow!("missing required arg: path"))?;
     let root_type = str_arg(args, "root_type")
         .ok_or_else(|| anyhow::anyhow!("missing required arg: root_type"))?;
     let root_name = str_arg(args, "root_name");
@@ -144,7 +150,7 @@ fn dispatch_scene_create(args: &Value) -> anyhow::Result<bool> {
 
 fn dispatch_scene_edit(args: &Value) -> anyhow::Result<bool> {
     let path =
-        str_arg(args, "path").ok_or_else(|| anyhow::anyhow!("missing required arg: path"))?;
+        path_arg(args, "path").ok_or_else(|| anyhow::anyhow!("missing required arg: path"))?;
     let set = str_array_arg(args, "set");
     if set.is_empty() {
         anyhow::bail!("missing required arg: set");
@@ -154,14 +160,14 @@ fn dispatch_scene_edit(args: &Value) -> anyhow::Result<bool> {
 
 fn dispatch_scene_inspect(args: &Value) -> anyhow::Result<bool> {
     let path =
-        str_arg(args, "path").ok_or_else(|| anyhow::anyhow!("missing required arg: path"))?;
+        path_arg(args, "path").ok_or_else(|| anyhow::anyhow!("missing required arg: path"))?;
     let node = str_arg(args, "node");
     commands::scene::run_inspect(&path, node.as_deref(), true)
 }
 
 fn dispatch_sub_resource_add(args: &Value) -> anyhow::Result<bool> {
     let scene =
-        str_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
+        path_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
     let resource_type = str_arg(args, "resource_type")
         .ok_or_else(|| anyhow::anyhow!("missing required arg: resource_type"))?;
     let wire_node = str_arg(args, "wire_node");
@@ -195,7 +201,7 @@ fn dispatch_sub_resource_add(args: &Value) -> anyhow::Result<bool> {
 
 fn dispatch_sub_resource_edit(args: &Value) -> anyhow::Result<bool> {
     let scene =
-        str_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
+        path_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
     let id = str_arg(args, "id").ok_or_else(|| anyhow::anyhow!("missing required arg: id"))?;
     let set = str_array_arg(args, "set");
     if set.is_empty() {
@@ -206,7 +212,7 @@ fn dispatch_sub_resource_edit(args: &Value) -> anyhow::Result<bool> {
 
 fn dispatch_node_add(args: &Value) -> anyhow::Result<bool> {
     let scene =
-        str_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
+        path_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
     let node_type = str_arg(args, "node_type");
     let name =
         str_arg(args, "name").ok_or_else(|| anyhow::anyhow!("missing required arg: name"))?;
@@ -277,7 +283,7 @@ fn dispatch_node_add(args: &Value) -> anyhow::Result<bool> {
 
 fn dispatch_node_remove(args: &Value) -> anyhow::Result<bool> {
     let scene =
-        str_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
+        path_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
     let name =
         str_arg(args, "name").ok_or_else(|| anyhow::anyhow!("missing required arg: name"))?;
     commands::node::run_remove(&scene, &name, true)
@@ -290,7 +296,7 @@ fn dispatch_uid_fix(args: &Value) -> anyhow::Result<bool> {
 
 fn dispatch_script_create(args: &Value) -> anyhow::Result<bool> {
     let path =
-        str_arg(args, "path").ok_or_else(|| anyhow::anyhow!("missing required arg: path"))?;
+        path_arg(args, "path").ok_or_else(|| anyhow::anyhow!("missing required arg: path"))?;
     let extends = str_arg(args, "extends").unwrap_or_else(|| "Node".to_string());
     let methods = str_array_arg(args, "methods");
     let force = bool_arg(args, "force");
@@ -307,7 +313,7 @@ fn dispatch_docs(args: &Value) -> anyhow::Result<bool> {
 
 fn dispatch_load_sprite(args: &Value) -> anyhow::Result<bool> {
     let scene =
-        str_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
+        path_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
     let name =
         str_arg(args, "name").ok_or_else(|| anyhow::anyhow!("missing required arg: name"))?;
     let texture =
@@ -344,7 +350,7 @@ fn dispatch_load_sprite(args: &Value) -> anyhow::Result<bool> {
 
 fn dispatch_connection_add(args: &Value) -> anyhow::Result<bool> {
     let scene =
-        str_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
+        path_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
     let signal =
         str_arg(args, "signal").ok_or_else(|| anyhow::anyhow!("missing required arg: signal"))?;
     let from =
@@ -357,7 +363,7 @@ fn dispatch_connection_add(args: &Value) -> anyhow::Result<bool> {
 
 fn dispatch_connection_remove(args: &Value) -> anyhow::Result<bool> {
     let scene =
-        str_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
+        path_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
     let signal =
         str_arg(args, "signal").ok_or_else(|| anyhow::anyhow!("missing required arg: signal"))?;
     let from =
@@ -377,20 +383,20 @@ fn dispatch_doctor() -> anyhow::Result<bool> {
 
 fn dispatch_script_lint(args: &Value) -> anyhow::Result<bool> {
     let godot_info = godot_finder::find_and_probe()?;
-    let file = str_arg(args, "file");
+    let file = path_arg(args, "file");
     commands::script::run_lint(&godot_info, file.as_deref(), true)
 }
 
 fn dispatch_run(args: &Value) -> anyhow::Result<bool> {
     let godot_info = godot_finder::find_and_probe()?;
     let timeout = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(30);
-    let scene = str_arg(args, "scene");
+    let scene = path_arg(args, "scene");
     commands::run::run_project(&godot_info, timeout, scene.as_deref(), true)
 }
 
 fn dispatch_run_start(args: &Value) -> anyhow::Result<bool> {
     let timeout = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(30);
-    let scene = str_arg(args, "scene");
+    let scene = path_arg(args, "scene");
     commands::run_session::run_start(timeout, scene.as_deref(), true)
 }
 

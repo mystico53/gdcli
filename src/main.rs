@@ -163,6 +163,29 @@ enum ScriptAction {
 enum ProjectAction {
     /// Display project metadata
     Info,
+
+    /// Initialize a new Godot project (creates project.godot)
+    Init {
+        /// Directory to create the project in (default: current directory)
+        #[arg(long)]
+        path: Option<String>,
+
+        /// Project name (default: directory name)
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Godot version (e.g. "4.6") — auto-detected if Godot is installed
+        #[arg(long)]
+        godot_version: Option<String>,
+
+        /// Renderer: forward_plus (default), mobile, or gl_compatibility
+        #[arg(long)]
+        renderer: Option<String>,
+
+        /// Overwrite existing project.godot
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -402,6 +425,29 @@ fn run(command: Commands, json_mode: bool) -> anyhow::Result<()> {
             action: ProjectAction::Info,
         } => {
             let ok = commands::project::run_info(json_mode)?;
+            if !ok {
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+        Commands::Project {
+            action:
+                ProjectAction::Init {
+                    path,
+                    name,
+                    godot_version,
+                    renderer,
+                    force,
+                },
+        } => {
+            let ok = commands::project::run_init(
+                path.as_deref(),
+                name.as_deref(),
+                godot_version.as_deref(),
+                renderer.as_deref(),
+                *force,
+                json_mode,
+            )?;
             if !ok {
                 std::process::exit(1);
             }

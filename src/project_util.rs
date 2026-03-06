@@ -1,6 +1,13 @@
 use anyhow::{bail, Result};
 use std::path::{Path, PathBuf};
 
+/// Strip the `res://` prefix from a path string if present.
+/// This allows MCP callers to use Godot-style resource paths (e.g. `res://main.tscn`)
+/// which get converted to relative filesystem paths (e.g. `main.tscn`).
+pub fn strip_res_prefix(path: &str) -> &str {
+    path.strip_prefix("res://").unwrap_or(path)
+}
+
 /// Walk up from `start` looking for a directory containing `project.godot`.
 /// Returns the directory path (not the file itself).
 pub fn find_project_root(start: &Path) -> Option<PathBuf> {
@@ -107,5 +114,19 @@ mod tests {
         assert_eq!(find_project_root(&dir), None);
 
         let _ = fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn test_strip_res_prefix() {
+        assert_eq!(strip_res_prefix("res://main.tscn"), "main.tscn");
+        assert_eq!(
+            strip_res_prefix("res://scenes/player.tscn"),
+            "scenes/player.tscn"
+        );
+        assert_eq!(strip_res_prefix("main.tscn"), "main.tscn");
+        assert_eq!(strip_res_prefix(""), "");
+        assert_eq!(strip_res_prefix("res://"), "");
+        // Only strip the prefix, not a partial match
+        assert_eq!(strip_res_prefix("res:/main.tscn"), "res:/main.tscn");
     }
 }

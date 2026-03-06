@@ -1,7 +1,7 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use serde::Serialize;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::output;
 use crate::project_util;
@@ -99,6 +99,140 @@ fn extract_value(line: &str, key: &str) -> Option<String> {
     // Remove surrounding quotes
     let val = rest.trim().trim_matches('"');
     Some(val.to_string())
+}
+
+// --- project init ---
+
+#[derive(Serialize)]
+pub struct ProjectInitReport {
+    pub path: String,
+    pub name: String,
+    pub godot_version: String,
+    pub renderer: String,
+}
+
+pub fn run_init(
+    dir: Option<&str>,
+    name: Option<&str>,
+    godot_version: Option<&str>,
+    renderer: Option<&str>,
+    force: bool,
+    json_mode: bool,
+) -> Result<bool> {
+    let project_dir = match dir {
+        Some(d) => {
+            let p = PathBuf::from(d);
+            if !p.exists() {
+                fs::create_dir_all(&p)?;
+            }
+            p.canonicalize()?
+        }
+        None => std::env::current_dir()?,
+    };
+
+    let project_file = project_dir.join("project.godot");
+    if project_file.is_file() && !force {
+        bail!(
+            "project.godot already exists at {}\nUse --force to overwrite.",
+            project_file.display()
+        );
+    }
+
+    // Determine project name
+    let resolved_name = match name {
+        Some(n) => n.to_string(),
+        None => project_dir
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_else(|| "MyProject".to_string()),
+    };
+
+    // Determine Godot version (major.minor)
+    let resolved_version = match godot_version {
+        Some(v) => extract_major_minor(v),
+        None => {
+            match crate::godot_finder::find_and_probe() {
+                Ok(info) => extract_major_minor(&info.version),
+                Err(_) => bail!(
+                    "Could not detect Godot version.\n\
+                     Provide --godot-version (e.g. --godot-version 4.6)"
+                ),
+            }
+        }
+    };
+
+    // Determine renderer
+    let (renderer_label, renderer_method) = match renderer.unwrap_or("forward_plus") {
+        "mobile" => ("Mobile", "mobile"),
+        "gl_compatibility" | "compatibility" => ("GL Compatibility", "gl_compatibility"),
+        _ => ("Forward Plus", "forward_plus"),
+    };
+
+    // Generate project.godot content matching Godot's own format
+    let content = format!(
+        "\
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
+config_version=5
+
+[application]
+
+config/name=\"{name}\"
+config/features=PackedStringArray(\"{version}\", \"{renderer_label}\")
+
+[rendering]
+
+renderer/rendering_method=\"{renderer_method}\"
+",
+        name = resolved_name,
+        version = resolved_version,
+        renderer_label = renderer_label,
+        renderer_method = renderer_method,
+    );
+
+    fs::write(&project_file, &content)?;
+
+    if json_mode {
+        let report = ProjectInitReport {
+            path: project_file.display().to_string(),
+            name: resolved_name.clone(),
+            godot_version: resolved_version.clone(),
+            renderer: renderer_label.to_string(),
+        };
+        let envelope = output::JsonEnvelope {
+            ok: true,
+            command: "project init".into(),
+            data: Some(report),
+            error: None,
+        };
+        output::emit_json(&envelope);
+    } else {
+        println!(
+            "  \u{2713} Created project.godot at {}",
+            project_file.display()
+        );
+        println!("    Name:     {}", resolved_name);
+        println!("    Version:  {}", resolved_version);
+        println!("    Renderer: {}", renderer_label);
+    }
+
+    Ok(true)
+}
+
+/// Extract major.minor from a version string like "4.6.1.stable" → "4.6"
+fn extract_major_minor(version: &str) -> String {
+    let parts: Vec<&str> = version.split('.').collect();
+    if parts.len() >= 2 {
+        format!("{}.{}", parts[0], parts[1])
+    } else {
+        version.to_string()
+    }
 }
 
 /// Recursively count files with a given extension, skipping hidden dirs.
