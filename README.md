@@ -10,20 +10,34 @@ gdcli gives coding agents (and you) a structured, scriptable interface to Godot 
 - **MCP server** — exposes all commands as tools for Claude, Cursor, Cline, and other MCP clients
 - **JSON by default** — auto-detects piped output and switches to structured JSON
 
-### How it compares
+### Why gdcli over godot-mcp
 
-Most Godot AI tooling (like godot-mcp) requires a Node.js runtime and runs everything through a Godot subprocess. gdcli takes a different approach:
+Most Godot AI tooling runs everything through a Godot subprocess — every scene edit, every node addition, every property change spawns the engine. gdcli parses `.tscn` files directly, so the operations that agents call most often (add node, edit property, wire a texture) are instant filesystem I/O.
 
 | | gdcli | godot-mcp |
 |---|---|---|
 | Runtime | Single Rust binary | Node.js + npm |
 | Interface | CLI + MCP server | MCP only |
-| Scene operations | Direct `.tscn` parsing (instant) | Godot subprocess |
-| Godot requirement | Only for lint/run/docs | Always |
+| Scene edits | Direct `.tscn` parsing (~1ms) | Godot subprocess (~2s) |
+| Godot required | Only for lint/run/docs | Always |
+| Non-blocking run | `run_start` / `run_read` / `run_stop` | Blocks server until done |
+| Offline use | 19 of 23 tools work without Godot | Nothing works without Godot |
+
+**Concrete advantages:**
+
+- **Speed** — adding a node, editing a property, or wiring a sub-resource takes milliseconds. Agents iterate faster when the edit-lint-run loop isn't bottlenecked by engine startup.
+- **No runtime dependencies** — `cargo install` or download the binary. No `npm install`, no `node_modules`, no version conflicts.
+- **CLI + MCP in one binary** — every MCP tool is also a CLI command. Agents can use MCP; humans can use the shell; CI can use either. Same tool, same output format.
+- **Non-blocking project execution** — `run_start` spawns Godot in the background and returns immediately. The agent can continue editing files, then poll with `run_read` or stop with `run_stop`. godot-mcp's run blocks the entire server.
+- **Works without Godot installed** — scene creation, node manipulation, sub-resources, connections, UID fixes, project info, docs lookup — none of these need Godot on the machine. Only lint, run, doctor, and docs build require the engine.
 
 ## Install
 
-**From source (recommended):**
+**Download prebuilt binaries (easiest):**
+
+Grab the latest release for your platform from the [Releases page](https://github.com/mystico53/gdcli/releases/latest) — Windows, Linux, and macOS (universal) binaries are available. Extract and add to your PATH.
+
+**From source:**
 
 ```sh
 cargo install --git https://github.com/mystico53/gdcli
@@ -103,6 +117,14 @@ Run `gdcli doctor` to verify your setup.
 | `gdcli sub-resource add scene.tscn CircleShape2D` | Create an unwired sub-resource (emits a warning) |
 | `gdcli sub-resource edit scene.tscn RectangleShape2D_abc --set "size=Vector2(60,60)"` | Edit properties on an existing sub-resource |
 
+### Sprites
+
+| Command | Description |
+|---|---|
+| `gdcli load-sprite scene.tscn MySprite res://icon.svg` | Add a Sprite2D with a texture in one call |
+| `gdcli load-sprite scene.tscn MySprite res://icon.svg --sprite-type Sprite3D --parent Player` | Sprite3D under a specific parent |
+| `gdcli load-sprite scene.tscn MySprite res://icon.svg --props "position=Vector2(100,200)"` | With additional properties |
+
 ### Connections
 
 | Command | Description |
@@ -136,8 +158,10 @@ Run `gdcli doctor` to verify your setup.
 
 | Command | Description |
 |---|---|
-| `gdcli run` | Run the project headlessly (30s default timeout) |
+| `gdcli run` | Run the project headlessly (30s default timeout, blocks until done) |
 | `gdcli run --timeout 60 --scene res://levels/test.tscn` | Run a specific scene with custom timeout |
+
+**Streaming sessions (MCP):** For non-blocking execution, use `run_start` / `run_read` / `run_stop` via MCP. The agent starts Godot in the background, continues editing files, then polls for output — no server blocking.
 
 ### MCP Server
 
@@ -174,7 +198,7 @@ Every response uses the same envelope:
 
 ## MCP server mode
 
-gdcli includes a built-in [MCP](https://modelcontextprotocol.io/) server that exposes all 19 commands as tools. Any MCP-compatible client (Claude Code, Claude Desktop, Cursor, Cline, etc.) can use it.
+gdcli includes a built-in [MCP](https://modelcontextprotocol.io/) server that exposes all 23 commands as tools. Any MCP-compatible client (Claude Code, Claude Desktop, Cursor, Cline, etc.) can use it.
 
 **Configure in `.mcp.json`** (or your client's MCP config):
 
@@ -203,41 +227,43 @@ The `cwd` should point to your Godot project root (the directory with `project.g
 }
 ```
 
-All 19 tools are exposed: `doctor`, `project_info`, `scene_list`, `scene_validate`, `scene_create`, `scene_edit`, `scene_inspect`, `node_add`, `node_remove`, `sub_resource_add`, `sub_resource_edit`, `connection_add`, `connection_remove`, `uid_fix`, `script_create`, `script_lint`, `run`, `docs`, `docs_build`.
+All 23 tools are exposed: `doctor`, `project_info`, `scene_list`, `scene_validate`, `scene_create`, `scene_edit`, `scene_inspect`, `node_add`, `node_remove`, `load_sprite`, `sub_resource_add`, `sub_resource_edit`, `connection_add`, `connection_remove`, `uid_fix`, `script_create`, `script_lint`, `run`, `run_start`, `run_read`, `run_stop`, `docs`, `docs_build`.
 
 ## Agentic workflow
 
 ```
   Agent                     gdcli                    Godot
     |                         |                        |
-    |-- gdcli doctor -------->|--- probe version ----->|
+    |-- doctor -------------->|--- probe version ----->|
     |<-- JSON: ok, version ---|                        |
     |                         |                        |
-    |-- gdcli script create ->|                        |
+    |-- script create ------->|                        |
     |<-- JSON: file created --|  (filesystem only)     |
     |                         |                        |
-    |-- gdcli scene create -->|                        |
+    |-- scene create -------->|                        |
     |<-- JSON: scene created -|  (filesystem only)     |
     |                         |                        |
-    |-- gdcli node add ------>|                        |
+    |-- load_sprite --------->|                        |
+    |<-- JSON: sprite added --|  (filesystem only)     |
+    |                         |                        |
+    |-- node add ------------>|                        |
     |<-- JSON: node added ----|  (filesystem only)     |
     |                         |                        |
-    |-- gdcli sub-resource -->|                        |
-    |<-- JSON: wired to node -|  (filesystem only)     |
-    |                         |                        |
-    |-- gdcli scene inspect ->|                        |
-    |<-- JSON: full structure -|  (filesystem only)    |
-    |                         |                        |
-    |-- gdcli script lint --->|--- --check-only ------>|
+    |-- script lint --------->|--- --check-only ------>|
     |<-- JSON: errors[] ------|                        |
     |                         |                        |
     |   (fix errors in .gd)   |                        |
     |                         |                        |
-    |-- gdcli script lint --->|--- --check-only ------>|
-    |<-- JSON: ok, 0 errors --|                        |
+    |-- run_start ----------->|--- headless run ------>|
+    |<-- JSON: session_id ----|       (background)     |
     |                         |                        |
-    |-- gdcli run ----------->|--- headless run ------>|
-    |<-- JSON: exit 0 --------|                        |
+    |   (continue editing)    |          ...           |
+    |                         |                        |
+    |-- run_read ------------>|                        |
+    |<-- JSON: new output ----|                        |
+    |                         |                        |
+    |-- run_stop ------------>|--- kill if running --->|
+    |<-- JSON: all output ----|                        |
 ```
 
 ## Architecture
@@ -246,8 +272,8 @@ gdcli commands split into two layers:
 
 | Layer | Commands | How it works |
 |---|---|---|
-| **Filesystem** | `project info`, `scene list/validate/create/edit/inspect`, `node add/remove`, `sub-resource add/edit`, `connection add/remove`, `uid fix`, `script create`, `docs` | Direct file I/O — parses `.tscn`, `.tres`, `.uid`, `.godot`, and XML files. Instant, no Godot needed. |
-| **Godot subprocess** | `doctor`, `script lint`, `run`, `docs --build` | Spawns Godot with `--headless`, captures stdout/stderr. Works with stock Godot 4. |
+| **Filesystem** | `project info`, `scene list/validate/create/edit/inspect`, `node add/remove`, `load-sprite`, `sub-resource add/edit`, `connection add/remove`, `uid fix`, `script create`, `docs` | Direct file I/O — parses `.tscn`, `.tres`, `.uid`, `.godot`, and XML files. Instant, no Godot needed. |
+| **Godot subprocess** | `doctor`, `script lint`, `run`, `run_start/read/stop`, `docs --build` | Spawns Godot with `--headless`, captures stdout/stderr. Works with stock Godot 4. |
 
 ## Contributing
 
