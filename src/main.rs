@@ -504,14 +504,14 @@ fn run(command: Commands, json_mode: bool) -> anyhow::Result<()> {
                     from,
                     to,
                     method,
-                } => commands::connection::run_add(&scene, &signal, &from, &to, &method, json_mode)?,
+                } => commands::connection::run_add(scene, signal, from, to, method, json_mode)?,
                 ConnectionAction::Remove {
                     scene,
                     signal,
                     from,
                     to,
                     method,
-                } => commands::connection::run_remove(&scene, &signal, &from, &to, &method, json_mode)?,
+                } => commands::connection::run_remove(scene, signal, from, to, method, json_mode)?,
             };
             if !ok {
                 std::process::exit(1);
