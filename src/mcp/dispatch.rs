@@ -116,8 +116,10 @@ fn dispatch_scene_create(args: &Value) -> anyhow::Result<bool> {
         str_arg(args, "path").ok_or_else(|| anyhow::anyhow!("missing required arg: path"))?;
     let root_type = str_arg(args, "root_type")
         .ok_or_else(|| anyhow::anyhow!("missing required arg: root_type"))?;
+    let root_name = str_arg(args, "root_name");
+    let script = str_arg(args, "script");
     let force = bool_arg(args, "force");
-    commands::scene::run_create(&path, &root_type, force, true)
+    commands::scene::run_create(&path, &root_type, root_name.as_deref(), script.as_deref(), force, true)
 }
 
 fn dispatch_scene_edit(args: &Value) -> anyhow::Result<bool> {
@@ -133,12 +135,17 @@ fn dispatch_scene_edit(args: &Value) -> anyhow::Result<bool> {
 fn dispatch_node_add(args: &Value) -> anyhow::Result<bool> {
     let scene =
         str_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
-    let node_type = str_arg(args, "node_type")
-        .ok_or_else(|| anyhow::anyhow!("missing required arg: node_type"))?;
+    let node_type = str_arg(args, "node_type");
     let name =
         str_arg(args, "name").ok_or_else(|| anyhow::anyhow!("missing required arg: name"))?;
     let parent = str_arg(args, "parent");
     let script = str_arg(args, "script");
+    let instance = str_arg(args, "instance");
+
+    if node_type.is_none() && instance.is_none() {
+        anyhow::bail!("Either node_type or instance must be provided");
+    }
+
     let props_raw = str_array_arg(args, "props");
     let parsed_props: Vec<(String, String)> = props_raw
         .iter()
@@ -156,11 +163,12 @@ fn dispatch_node_add(args: &Value) -> anyhow::Result<bool> {
         .collect();
     commands::node::run_add(
         &scene,
-        &node_type,
+        node_type.as_deref(),
         &name,
         parent.as_deref(),
         script.as_deref(),
         &parsed_props,
+        instance.as_deref(),
         true,
     )
 }

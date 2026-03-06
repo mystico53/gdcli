@@ -146,6 +146,14 @@ enum SceneAction {
         #[arg(long)]
         root_type: String,
 
+        /// Name for the root node (default: derived from filename)
+        #[arg(long)]
+        root_name: Option<String>,
+
+        /// Attach a script to the root node (res:// path)
+        #[arg(long)]
+        script: Option<String>,
+
         /// Overwrite if file already exists
         #[arg(long)]
         force: bool,
@@ -169,8 +177,8 @@ enum NodeAction {
         /// Path to the .tscn file
         scene: String,
 
-        /// Node type (e.g. Sprite2D, Timer, Node2D)
-        node_type: String,
+        /// Node type (e.g. Sprite2D, Timer, Node2D) — required unless --instance is used
+        node_type: Option<String>,
 
         /// Name for the new node
         name: String,
@@ -183,8 +191,12 @@ enum NodeAction {
         #[arg(long)]
         script: Option<String>,
 
-        /// Properties as key=val pairs
-        #[arg(long, value_delimiter = ',')]
+        /// Instance a scene instead of creating a typed node (res:// path)
+        #[arg(long)]
+        instance: Option<String>,
+
+        /// Properties as key=val pairs (semicolon-separated)
+        #[arg(long, value_delimiter = ';')]
         props: Vec<String>,
     },
 
@@ -252,8 +264,10 @@ fn run(command: Commands, json_mode: bool) -> anyhow::Result<()> {
                 SceneAction::Create {
                     path,
                     root_type,
+                    root_name,
+                    script,
                     force,
-                } => commands::scene::run_create(path, root_type, *force, json_mode)?,
+                } => commands::scene::run_create(path, root_type, root_name.as_deref(), script.as_deref(), *force, json_mode)?,
                 SceneAction::Edit { path, set } => commands::scene::run_edit(path, set, json_mode)?,
             };
             if !ok {
@@ -269,8 +283,12 @@ fn run(command: Commands, json_mode: bool) -> anyhow::Result<()> {
                     name,
                     parent,
                     script,
+                    instance,
                     props,
                 } => {
+                    if node_type.is_none() && instance.is_none() {
+                        anyhow::bail!("Either <NODE_TYPE> or --instance must be provided");
+                    }
                     let parsed_props: Vec<(String, String)> = props
                         .iter()
                         .filter_map(|p| {
@@ -287,11 +305,12 @@ fn run(command: Commands, json_mode: bool) -> anyhow::Result<()> {
                         .collect();
                     commands::node::run_add(
                         scene,
-                        node_type,
+                        node_type.as_deref(),
                         name,
                         parent.as_deref(),
                         script.as_deref(),
                         &parsed_props,
+                        instance.as_deref(),
                         json_mode,
                     )?
                 }

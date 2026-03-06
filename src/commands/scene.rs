@@ -15,7 +15,7 @@ pub struct SceneCreateReport {
     pub uid: String,
 }
 
-pub fn run_create(scene_path: &str, root_type: &str, force: bool, json_mode: bool) -> Result<bool> {
+pub fn run_create(scene_path: &str, root_type: &str, root_name: Option<&str>, script: Option<&str>, force: bool, json_mode: bool) -> Result<bool> {
     let path = Path::new(scene_path);
 
     if path.is_file() && !force {
@@ -32,8 +32,14 @@ pub fn run_create(scene_path: &str, root_type: &str, force: bool, json_mode: boo
         }
     }
 
+    // Derive root node name from filename if not explicitly provided
+    let resolved_name = match root_name {
+        Some(name) => name.to_string(),
+        None => scene_parser::filename_to_node_name(scene_path),
+    };
+
     let uid = scene_parser::generate_uid();
-    let content = scene_parser::generate_minimal_scene(root_type, &uid);
+    let content = scene_parser::generate_minimal_scene(root_type, &resolved_name, &uid, script);
 
     scene_parser::atomic_write(path, &content)?;
 
@@ -52,8 +58,8 @@ pub fn run_create(scene_path: &str, root_type: &str, force: bool, json_mode: boo
         output::emit_json(&envelope);
     } else {
         println!(
-            "  \u{2713} Created {} (root: {}, uid: {})",
-            scene_path, root_type, uid
+            "  \u{2713} Created {} (root: {} \"{}\", uid: {})",
+            scene_path, root_type, resolved_name, uid
         );
     }
 
@@ -174,9 +180,9 @@ pub fn run_validate(scene_path: &str, json_mode: bool) -> Result<bool> {
         }
     }
 
-    // Check for nodes without a type (possible instance placeholder issues)
+    // Check for nodes without a type (skip instanced scene nodes — they legitimately lack a type)
     for node in &parsed.nodes {
-        if node.node_type.is_empty() && node.parent.is_some() {
+        if node.node_type.is_empty() && node.parent.is_some() && node.instance.is_none() {
             issues.push(ValidationIssue {
                 severity: "warning".into(),
                 message: format!(

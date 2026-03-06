@@ -35,6 +35,9 @@ pub struct SceneNode {
     pub name: String,
     pub node_type: String,
     pub parent: Option<String>,
+    /// Instance reference for nodes that are instanced scenes (e.g. `ExtResource("2_abc")`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance: Option<String>,
     /// Properties like `script = ExtResource("1_abc")`, `position = Vector2(0, 0)`, etc.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub properties: Vec<NodeProperty>,
@@ -114,11 +117,12 @@ pub fn parse_scene_text(content: &str) -> anyhow::Result<ParsedScene> {
             continue;
         }
 
-        // Node: [node name="Name" type="Type" parent="."]
+        // Node: [node name="Name" type="Type" parent="." instance=ExtResource("id")]
         if trimmed.starts_with("[node ") {
             let name = extract_quoted_attr(trimmed, "name").unwrap_or_default();
             let node_type = extract_quoted_attr(trimmed, "type").unwrap_or_default();
             let parent = extract_quoted_attr(trimmed, "parent");
+            let instance = extract_instance_attr(trimmed);
 
             // Collect properties (lines after [node ...] until next section or blank line)
             let mut properties = Vec::new();
@@ -140,6 +144,7 @@ pub fn parse_scene_text(content: &str) -> anyhow::Result<ParsedScene> {
                 name,
                 node_type,
                 parent,
+                instance,
                 properties,
             });
             continue;
@@ -174,12 +179,48 @@ pub fn parse_scene_text(content: &str) -> anyhow::Result<ParsedScene> {
     })
 }
 
+/// Derive a PascalCase node name from a filename.
+/// e.g. "enemy.tscn" → "Enemy", "game_over.tscn" → "GameOver", "my-level.tscn" → "MyLevel"
+pub fn filename_to_node_name(path: &str) -> String {
+    let stem = Path::new(path)
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy();
+
+    stem.split(['_', '-'])
+        .filter(|s| !s.is_empty())
+        .map(|segment| {
+            let mut chars = segment.chars();
+            match chars.next() {
+                Some(first) => {
+                    let upper: String = first.to_uppercase().collect();
+                    upper + chars.as_str()
+                }
+                None => String::new(),
+            }
+        })
+        .collect()
+}
+
 /// Generate a minimal .tscn scene with just a root node.
-pub fn generate_minimal_scene(root_type: &str, uid: &str) -> String {
-    format!(
-        "[gd_scene format=3 uid=\"{}\"]\n\n[node name=\"{}\" type=\"{}\"]\n",
-        uid, root_type, root_type
-    )
+/// `root_name` is used for the node's name, `root_type` for its type.
+/// If `script` is provided, adds an ext_resource for it and attaches it to the root node.
+pub fn generate_minimal_scene(root_type: &str, root_name: &str, uid: &str, script: Option<&str>) -> String {
+    if let Some(script_path) = script {
+        let ext_id = generate_ext_resource_id(0);
+        format!(
+            "[gd_scene load_steps=2 format=3 uid=\"{}\"]\n\n\
+             [ext_resource type=\"Script\" path=\"{}\" id=\"{}\"]\n\n\
+             [node name=\"{}\" type=\"{}\"]\n\
+             script = ExtResource(\"{}\")\n",
+            uid, script_path, ext_id, root_name, root_type, ext_id
+        )
+    } else {
+        format!(
+            "[gd_scene format=3 uid=\"{}\"]\n\n[node name=\"{}\" type=\"{}\"]\n",
+            uid, root_name, root_type
+        )
+    }
 }
 
 /// Generate a Godot-style UID like "uid://abc123xyz".
@@ -257,6 +298,9 @@ pub fn write_scene(scene: &ParsedScene) -> String {
         if let Some(ref parent) = node.parent {
             out.push_str(&format!(" parent=\"{}\"", parent));
         }
+        if let Some(ref inst) = node.instance {
+            out.push_str(&format!(" instance={}", inst));
+        }
         out.push_str("]\n");
 
         for prop in &node.properties {
@@ -331,13 +375,18 @@ fn generate_ext_resource_id(index: usize) -> String {
 
 /// Add a node to a parsed scene. Returns the modified scene.
 /// Operates on the raw text for faithful round-tripping.
+///
+/// Either `node_type` or `instance_path` must be provided:
+/// - `node_type`: creates a typed node (e.g. `Sprite2D`)
+/// - `instance_path`: creates an instanced scene node (e.g. `res://scenes/enemy.tscn`)
 pub fn add_node_to_file(
     path: &Path,
-    node_type: &str,
+    node_type: Option<&str>,
     node_name: &str,
     parent: Option<&str>,
     script: Option<&str>,
     props: &[(String, String)],
+    instance_path: Option<&str>,
 ) -> anyhow::Result<()> {
     let content = fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))?;
@@ -364,20 +413,19 @@ pub fn add_node_to_file(
     };
 
     let mut new_content = content.clone();
+    let mut ext_resource_count = scene.ext_resources.len();
 
-    // If script is specified, add an ext_resource for it
-    let script_ext_id = if let Some(script_path) = script {
-        let ext_id = generate_ext_resource_id(scene.ext_resources.len());
+    // If instance_path is specified, add a PackedScene ext_resource
+    let instance_ext_id = if let Some(inst_path) = instance_path {
+        let ext_id = generate_ext_resource_id(ext_resource_count);
+        ext_resource_count += 1;
         let ext_line = format!(
-            "\n[ext_resource type=\"Script\" path=\"{}\" id=\"{}\"]\n",
-            script_path, ext_id
+            "\n[ext_resource type=\"PackedScene\" path=\"{}\" id=\"{}\"]\n",
+            inst_path, ext_id
         );
 
-        // Insert after last ext_resource, or after the header line
         let insert_pos = find_ext_resource_insert_pos(&new_content);
         new_content.insert_str(insert_pos, &ext_line);
-
-        // Update load_steps in header
         new_content = update_load_steps(&new_content);
 
         Some(ext_id)
@@ -385,9 +433,42 @@ pub fn add_node_to_file(
         None
     };
 
+    // If script is specified (only for typed nodes, not instanced), add an ext_resource for it
+    let script_ext_id = if let Some(script_path) = script {
+        if instance_path.is_some() {
+            // Instanced nodes inherit their script — skip
+            None
+        } else {
+            let ext_id = generate_ext_resource_id(ext_resource_count);
+            let ext_line = format!(
+                "\n[ext_resource type=\"Script\" path=\"{}\" id=\"{}\"]\n",
+                script_path, ext_id
+            );
+
+            let insert_pos = find_ext_resource_insert_pos(&new_content);
+            new_content.insert_str(insert_pos, &ext_line);
+            new_content = update_load_steps(&new_content);
+
+            Some(ext_id)
+        }
+    } else {
+        None
+    };
+
     // Build the node section
-    let mut node_section = format!("\n[node name=\"{}\" type=\"{}\"", node_name, node_type);
-    node_section.push_str(&format!(" parent=\"{}\"]\n", parent_ref));
+    let mut node_section = format!("\n[node name=\"{}\"", node_name);
+
+    if let Some(nt) = node_type {
+        node_section.push_str(&format!(" type=\"{}\"", nt));
+    }
+
+    node_section.push_str(&format!(" parent=\"{}\"", parent_ref));
+
+    if let Some(ref ext_id) = instance_ext_id {
+        node_section.push_str(&format!(" instance=ExtResource(\"{}\")]\n", ext_id));
+    } else {
+        node_section.push_str("]\n");
+    }
 
     if let Some(ext_id) = &script_ext_id {
         node_section.push_str(&format!("script = ExtResource(\"{}\")\n", ext_id));
@@ -770,6 +851,18 @@ fn extract_quoted_attr(line: &str, attr: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
+/// Extract the `instance=ExtResource("...")` attribute from a node line.
+/// Returns `Some("ExtResource(\"id\")")` if present.
+fn extract_instance_attr(line: &str) -> Option<String> {
+    let marker = "instance=ExtResource(\"";
+    let start = line.find(marker)?;
+    let val_start = start + "instance=".len();
+    let rest = &line[val_start..];
+    // Find the closing `)` after `ExtResource("...")`
+    let end = rest.find(')')?;
+    Some(rest[..=end].to_string())
+}
+
 /// Extract an unquoted attribute value from a bracket line.
 /// e.g. extract_attr(`[gd_scene format=3]`, "format") -> Some("3")
 fn extract_attr(line: &str, attr: &str) -> Option<String> {
@@ -876,9 +969,28 @@ visible = false
 
     #[test]
     fn test_generate_minimal_scene() {
-        let scene = generate_minimal_scene("CharacterBody2D", "uid://test123");
+        let scene = generate_minimal_scene("CharacterBody2D", "Enemy", "uid://test123", None);
         assert!(scene.contains("[gd_scene format=3 uid=\"uid://test123\"]"));
-        assert!(scene.contains("[node name=\"CharacterBody2D\" type=\"CharacterBody2D\"]"));
+        assert!(scene.contains("[node name=\"Enemy\" type=\"CharacterBody2D\"]"));
+    }
+
+    #[test]
+    fn test_generate_minimal_scene_with_script() {
+        let scene = generate_minimal_scene("Node2D", "Main", "uid://test456", Some("res://scripts/test.gd"));
+        assert!(scene.contains("[gd_scene load_steps=2 format=3 uid=\"uid://test456\"]"));
+        assert!(scene.contains("[ext_resource type=\"Script\" path=\"res://scripts/test.gd\""));
+        assert!(scene.contains("[node name=\"Main\" type=\"Node2D\"]"));
+        assert!(scene.contains("script = ExtResource(\""));
+    }
+
+    #[test]
+    fn test_filename_to_node_name() {
+        assert_eq!(filename_to_node_name("enemy.tscn"), "Enemy");
+        assert_eq!(filename_to_node_name("game_over.tscn"), "GameOver");
+        assert_eq!(filename_to_node_name("my-level.tscn"), "MyLevel");
+        assert_eq!(filename_to_node_name("scenes/main.tscn"), "Main");
+        assert_eq!(filename_to_node_name("a_b_c.tscn"), "ABC");
+        assert_eq!(filename_to_node_name("Player.tscn"), "Player");
     }
 
     #[test]
@@ -923,6 +1035,28 @@ visible = false
     }
 
     #[test]
+    fn test_parse_instance_node() {
+        let content = r#"[gd_scene load_steps=2 format=3 uid="uid://abc"]
+
+[ext_resource type="PackedScene" path="res://coin.tscn" id="2_player"]
+
+[node name="Main" type="Node2D"]
+
+[node name="Coin1" parent="." instance=ExtResource("2_player")]
+"#;
+        let scene = parse_scene_text(content).unwrap();
+        assert_eq!(scene.nodes.len(), 2);
+        assert_eq!(scene.nodes[1].name, "Coin1");
+        assert!(scene.nodes[1].node_type.is_empty());
+        assert_eq!(
+            scene.nodes[1].instance.as_deref(),
+            Some("ExtResource(\"2_player\")")
+        );
+        // Root node should have no instance
+        assert_eq!(scene.nodes[0].instance, None);
+    }
+
+    #[test]
     fn test_parent_path_for() {
         let content = r#"[gd_scene format=3]
 
@@ -942,5 +1076,45 @@ visible = false
             parent_path_for(&scene, "Sprite"),
             Some("Player/Sprite".to_string())
         );
+    }
+
+    #[test]
+    fn test_add_instance_node() {
+        // Create a temp scene file and add an instanced node to it
+        let dir = std::env::temp_dir().join("gdcli_test_instance");
+        let _ = std::fs::create_dir_all(&dir);
+        let scene_path = dir.join("test_instance.tscn");
+
+        let content = "[gd_scene format=3 uid=\"uid://abc\"]\n\n[node name=\"Main\" type=\"Node2D\"]\n";
+        std::fs::write(&scene_path, content).unwrap();
+
+        add_node_to_file(
+            &scene_path,
+            None,
+            "Enemy1",
+            None,
+            None,
+            &[],
+            Some("res://scenes/enemy.tscn"),
+        )
+        .unwrap();
+
+        let result = std::fs::read_to_string(&scene_path).unwrap();
+        let parsed = parse_scene_text(&result).unwrap();
+
+        // Should have a PackedScene ext_resource
+        assert_eq!(parsed.ext_resources.len(), 1);
+        assert_eq!(parsed.ext_resources[0].resource_type, "PackedScene");
+        assert_eq!(parsed.ext_resources[0].path, "res://scenes/enemy.tscn");
+
+        // Should have the instanced node with no type
+        assert_eq!(parsed.nodes.len(), 2);
+        assert_eq!(parsed.nodes[1].name, "Enemy1");
+        assert!(parsed.nodes[1].node_type.is_empty());
+        assert!(parsed.nodes[1].instance.is_some());
+
+        // Clean up
+        let _ = std::fs::remove_file(&scene_path);
+        let _ = std::fs::remove_dir(&dir);
     }
 }

@@ -64,6 +64,14 @@ pub fn all_tools() -> Vec<ToolDef> {
                         "type": "string",
                         "description": "Type of the root node (e.g. Node2D, Control)"
                     },
+                    "root_name": {
+                        "type": "string",
+                        "description": "Name for the root node (default: derived from filename, e.g. enemy.tscn -> Enemy)"
+                    },
+                    "script": {
+                        "type": "string",
+                        "description": "Attach a script to the root node (res:// path)"
+                    },
                     "force": {
                         "type": "boolean",
                         "description": "Overwrite if file already exists",
@@ -96,7 +104,7 @@ pub fn all_tools() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "node_add",
-            description: "Add a node to a scene file",
+            description: "Add a typed node or instanced scene to a scene file. Provide either node_type or instance (not both).",
             schema: json!({
                 "type": "object",
                 "properties": {
@@ -106,7 +114,7 @@ pub fn all_tools() -> Vec<ToolDef> {
                     },
                     "node_type": {
                         "type": "string",
-                        "description": "Node type (e.g. Sprite2D, Timer)"
+                        "description": "Node type (e.g. Sprite2D, Timer) — required unless instance is provided"
                     },
                     "name": {
                         "type": "string",
@@ -118,15 +126,19 @@ pub fn all_tools() -> Vec<ToolDef> {
                     },
                     "script": {
                         "type": "string",
-                        "description": "Attach a script (res:// path)"
+                        "description": "Attach a script (res:// path) — only for typed nodes"
+                    },
+                    "instance": {
+                        "type": "string",
+                        "description": "Instance a scene (res:// path) instead of creating a typed node"
                     },
                     "props": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "Properties as key=val strings"
+                        "description": "Properties as key=val strings (one per array element)"
                     }
                 },
-                "required": ["scene", "node_type", "name"],
+                "required": ["scene", "name"],
                 "additionalProperties": false
             }),
         },
