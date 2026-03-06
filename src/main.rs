@@ -378,9 +378,18 @@ fn run(command: Commands, json_mode: bool) -> anyhow::Result<()> {
                     root_name,
                     script,
                     force,
-                } => commands::scene::run_create(path, root_type, root_name.as_deref(), script.as_deref(), *force, json_mode)?,
+                } => commands::scene::run_create(
+                    path,
+                    root_type,
+                    root_name.as_deref(),
+                    script.as_deref(),
+                    *force,
+                    json_mode,
+                )?,
                 SceneAction::Edit { path, set } => commands::scene::run_edit(path, set, json_mode)?,
-                SceneAction::Inspect { path, node } => commands::scene::run_inspect(path, node.as_deref(), json_mode)?,
+                SceneAction::Inspect { path, node } => {
+                    commands::scene::run_inspect(path, node.as_deref(), json_mode)?
+                }
             };
             if !ok {
                 std::process::exit(1);

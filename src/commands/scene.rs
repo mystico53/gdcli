@@ -16,7 +16,14 @@ pub struct SceneCreateReport {
     pub uid: String,
 }
 
-pub fn run_create(scene_path: &str, root_type: &str, root_name: Option<&str>, script: Option<&str>, force: bool, json_mode: bool) -> Result<bool> {
+pub fn run_create(
+    scene_path: &str,
+    root_type: &str,
+    root_name: Option<&str>,
+    script: Option<&str>,
+    force: bool,
+    json_mode: bool,
+) -> Result<bool> {
     project_util::ensure_project_context(Some(Path::new(scene_path)))?;
     let path = Path::new(scene_path);
 

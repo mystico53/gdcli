@@ -126,12 +126,7 @@ pub struct EditEntry {
     pub value: String,
 }
 
-pub fn run_edit(
-    scene_path: &str,
-    sub_id: &str,
-    edits: &[String],
-    json_mode: bool,
-) -> Result<bool> {
+pub fn run_edit(scene_path: &str, sub_id: &str, edits: &[String], json_mode: bool) -> Result<bool> {
     project_util::ensure_project_context(Some(Path::new(scene_path)))?;
     let path = Path::new(scene_path);
     if !path.is_file() {

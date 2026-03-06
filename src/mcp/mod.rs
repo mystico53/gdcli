@@ -30,8 +30,7 @@ pub fn run_mcp_server(project_dir: Option<&str>) -> anyhow::Result<()> {
         let req: protocol::JsonRpcRequest = match serde_json::from_str(trimmed) {
             Ok(r) => r,
             Err(e) => {
-                let err =
-                    JsonRpcError::new(None, PARSE_ERROR, format!("Parse error: {}", e));
+                let err = JsonRpcError::new(None, PARSE_ERROR, format!("Parse error: {}", e));
                 write_json(&mut stdout, &err)?;
                 continue;
             }

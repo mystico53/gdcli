@@ -94,13 +94,8 @@ pub fn run_add(
                 )
             })?;
 
-        let sub_id = scene_parser::add_sub_resource_to_file(
-            path,
-            sr_type,
-            sub_resource_props,
-            None,
-            None,
-        )?;
+        let sub_id =
+            scene_parser::add_sub_resource_to_file(path, sr_type, sub_resource_props, None, None)?;
 
         all_props.push((wire_prop.clone(), format!("SubResource(\"{}\")", sub_id)));
 
@@ -118,7 +113,9 @@ pub fn run_add(
         });
     }
 
-    scene_parser::add_node_to_file(path, node_type, node_name, parent, script, &all_props, instance)?;
+    scene_parser::add_node_to_file(
+        path, node_type, node_name, parent, script, &all_props, instance,
+    )?;
 
     let parent_display = parent.unwrap_or(".").to_string();
 
@@ -154,7 +151,10 @@ pub fn run_add(
     } else {
         println!(
             "  \u{2713} Added node '{}' (type: {}) to {} under '{}'",
-            node_name, node_type.unwrap_or("?"), scene_path, parent_display
+            node_name,
+            node_type.unwrap_or("?"),
+            scene_path,
+            parent_display
         );
         if let Some(s) = script {
             println!("    script: {}", s);

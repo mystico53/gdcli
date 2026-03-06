@@ -67,7 +67,10 @@ pub fn call_tool(name: &str, args: &Value) -> ToolResult {
             } else {
                 ToolResult {
                     is_error: true,
-                    text: format!(r#"{{"ok":false,"error":"{}"}}"#, escape_json(&format!("{e:#}"))),
+                    text: format!(
+                        r#"{{"ok":false,"error":"{}"}}"#,
+                        escape_json(&format!("{e:#}"))
+                    ),
                 }
             }
         }
@@ -112,7 +115,8 @@ fn dispatch_scene_list() -> anyhow::Result<bool> {
 }
 
 fn dispatch_scene_validate(args: &Value) -> anyhow::Result<bool> {
-    let path = str_arg(args, "path").ok_or_else(|| anyhow::anyhow!("missing required arg: path"))?;
+    let path =
+        str_arg(args, "path").ok_or_else(|| anyhow::anyhow!("missing required arg: path"))?;
     commands::scene::run_validate(&path, true)
 }
 
@@ -124,7 +128,14 @@ fn dispatch_scene_create(args: &Value) -> anyhow::Result<bool> {
     let root_name = str_arg(args, "root_name");
     let script = str_arg(args, "script");
     let force = bool_arg(args, "force");
-    commands::scene::run_create(&path, &root_type, root_name.as_deref(), script.as_deref(), force, true)
+    commands::scene::run_create(
+        &path,
+        &root_type,
+        root_name.as_deref(),
+        script.as_deref(),
+        force,
+        true,
+    )
 }
 
 fn dispatch_scene_edit(args: &Value) -> anyhow::Result<bool> {
@@ -331,10 +342,7 @@ fn dispatch_script_lint(args: &Value) -> anyhow::Result<bool> {
 
 fn dispatch_run(args: &Value) -> anyhow::Result<bool> {
     let godot_info = godot_finder::find_and_probe()?;
-    let timeout = args
-        .get("timeout")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(30);
+    let timeout = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(30);
     let scene = str_arg(args, "scene");
     commands::run::run_project(&godot_info, timeout, scene.as_deref(), true)
 }

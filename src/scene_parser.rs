@@ -143,7 +143,11 @@ pub fn parse_scene_text(content: &str) -> anyhow::Result<ParsedScene> {
                 i += 1;
             }
 
-            sub_resources.push(SubResource { id, resource_type, properties });
+            sub_resources.push(SubResource {
+                id,
+                resource_type,
+                properties,
+            });
             continue;
         }
 
@@ -235,7 +239,12 @@ pub fn filename_to_node_name(path: &str) -> String {
 /// Generate a minimal .tscn scene with just a root node.
 /// `root_name` is used for the node's name, `root_type` for its type.
 /// If `script` is provided, adds an ext_resource for it and attaches it to the root node.
-pub fn generate_minimal_scene(root_type: &str, root_name: &str, uid: &str, script: Option<&str>) -> String {
+pub fn generate_minimal_scene(
+    root_type: &str,
+    root_name: &str,
+    uid: &str,
+    script: Option<&str>,
+) -> String {
     if let Some(script_path) = script {
         let ext_id = generate_ext_resource_id(0);
         format!(
@@ -1133,7 +1142,11 @@ pub fn infer_resource_type(path: &str) -> &'static str {
 
 /// Add an ext_resource to a scene file if not already present.
 /// Returns the ext_resource ID (existing or newly created).
-pub fn add_ext_resource_to_file(path: &Path, res_path: &str, res_type: &str) -> anyhow::Result<String> {
+pub fn add_ext_resource_to_file(
+    path: &Path,
+    res_path: &str,
+    res_type: &str,
+) -> anyhow::Result<String> {
     let content = fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))?;
 
@@ -1240,9 +1253,10 @@ pub fn remove_connection_from_file(
     let scene = parse_scene_text(&content)?;
 
     // Verify connection exists
-    let found = scene.connections.iter().any(|c| {
-        c.signal == signal && c.from == from && c.to == to && c.method == method
-    });
+    let found = scene
+        .connections
+        .iter()
+        .any(|c| c.signal == signal && c.from == from && c.to == to && c.method == method);
     if !found {
         anyhow::bail!(
             "Connection not found: {}.{} -> {}.{}",
@@ -1390,7 +1404,12 @@ visible = false
 
     #[test]
     fn test_generate_minimal_scene_with_script() {
-        let scene = generate_minimal_scene("Node2D", "Main", "uid://test456", Some("res://scripts/test.gd"));
+        let scene = generate_minimal_scene(
+            "Node2D",
+            "Main",
+            "uid://test456",
+            Some("res://scripts/test.gd"),
+        );
         assert!(scene.contains("[gd_scene load_steps=2 format=3 uid=\"uid://test456\"]"));
         assert!(scene.contains("[ext_resource type=\"Script\" path=\"res://scripts/test.gd\""));
         assert!(scene.contains("[node name=\"Main\" type=\"Node2D\"]"));
@@ -1435,7 +1454,10 @@ visible = false
         assert_eq!(format_prop_value("[1, 2, 3]"), "[1, 2, 3]");
         assert_eq!(format_prop_value("[]"), "[]");
         // Dictionaries pass through unquoted
-        assert_eq!(format_prop_value("{\"key\": \"val\"}"), "{\"key\": \"val\"}");
+        assert_eq!(
+            format_prop_value("{\"key\": \"val\"}"),
+            "{\"key\": \"val\"}"
+        );
         assert_eq!(format_prop_value("{}"), "{}");
     }
 
@@ -1506,7 +1528,8 @@ visible = false
         let _ = std::fs::create_dir_all(&dir);
         let scene_path = dir.join("test_instance.tscn");
 
-        let content = "[gd_scene format=3 uid=\"uid://abc\"]\n\n[node name=\"Main\" type=\"Node2D\"]\n";
+        let content =
+            "[gd_scene format=3 uid=\"uid://abc\"]\n\n[node name=\"Main\" type=\"Node2D\"]\n";
         std::fs::write(&scene_path, content).unwrap();
 
         add_node_to_file(
@@ -1563,7 +1586,10 @@ shape = SubResource("RectangleShape2D_abc")
         assert_eq!(scene.sub_resources[0].resource_type, "RectangleShape2D");
         assert_eq!(scene.sub_resources[0].properties.len(), 1);
         assert_eq!(scene.sub_resources[0].properties[0].key, "size");
-        assert_eq!(scene.sub_resources[0].properties[0].value, "Vector2(40, 40)");
+        assert_eq!(
+            scene.sub_resources[0].properties[0].value,
+            "Vector2(40, 40)"
+        );
 
         assert_eq!(scene.sub_resources[1].resource_type, "CircleShape2D");
         assert_eq!(scene.sub_resources[1].properties.len(), 1);
@@ -1600,7 +1626,9 @@ size = Vector2(30, 30)
         add_connection_to_file(&scene_path, "pressed", "Button1", ".", "_on_pressed").unwrap();
 
         let result = std::fs::read_to_string(&scene_path).unwrap();
-        assert!(result.contains("[connection signal=\"pressed\" from=\"Button1\" to=\".\" method=\"_on_pressed\"]"));
+        assert!(result.contains(
+            "[connection signal=\"pressed\" from=\"Button1\" to=\".\" method=\"_on_pressed\"]"
+        ));
 
         // Duplicate should fail
         let dup = add_connection_to_file(&scene_path, "pressed", "Button1", ".", "_on_pressed");
