@@ -7,8 +7,10 @@ mod output;
 mod project_util;
 mod runner;
 mod scene_parser;
+mod session;
 
 use clap::{Parser, Subcommand};
+use std::io::IsTerminal;
 
 #[derive(Parser)]
 #[command(name = "gdcli", version, about = "Agent-friendly CLI for Godot 4")]
@@ -71,6 +73,30 @@ enum Commands {
     Connection {
         #[command(subcommand)]
         action: ConnectionAction,
+    },
+
+    /// Add a Sprite2D/Sprite3D node with a texture in one call
+    LoadSprite {
+        /// Path to the .tscn file
+        scene: String,
+
+        /// Name for the new sprite node
+        name: String,
+
+        /// Texture resource path (e.g. res://icon.svg)
+        texture: String,
+
+        /// Sprite type: Sprite2D (default) or Sprite3D
+        #[arg(long, default_value = "Sprite2D")]
+        sprite_type: String,
+
+        /// Parent node name (default: root node)
+        #[arg(long)]
+        parent: Option<String>,
+
+        /// Properties as key=val pairs (semicolon-separated)
+        #[arg(long, value_delimiter = ';')]
+        props: Vec<String>,
     },
 
     /// Fix stale UID references
@@ -332,6 +358,19 @@ enum UidAction {
 }
 
 fn main() {
+    // When double-clicked (no args, interactive terminal), show a friendly message
+    if std::env::args().len() <= 1 && std::io::stdout().is_terminal() {
+        println!("gdcli - CLI toolkit for Godot 4");
+        println!();
+        println!("This is a command-line tool. Open a terminal and run:");
+        println!("  gdcli doctor        Check your setup");
+        println!("  gdcli --help        See all commands");
+        println!();
+        println!("Press Enter to exit...");
+        let _ = std::io::stdin().read_line(&mut String::new());
+        return;
+    }
+
     let cli = Cli::parse();
     let json_mode = output::use_json(cli.json);
 
@@ -522,6 +561,42 @@ fn run(command: Commands, json_mode: bool) -> anyhow::Result<()> {
                     method,
                 } => commands::connection::run_remove(scene, signal, from, to, method, json_mode)?,
             };
+            if !ok {
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+        Commands::LoadSprite {
+            scene,
+            name,
+            texture,
+            sprite_type,
+            parent,
+            props,
+        } => {
+            let parsed_props: Vec<(String, String)> = props
+                .iter()
+                .filter_map(|p| {
+                    let parts: Vec<&str> = p.splitn(2, '=').collect();
+                    if parts.len() == 2 {
+                        Some((
+                            parts[0].to_string(),
+                            scene_parser::format_prop_value(parts[1]),
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let ok = commands::sprite::run_load_sprite(
+                scene,
+                name,
+                texture,
+                Some(sprite_type.as_str()),
+                parent.as_deref(),
+                &parsed_props,
+                json_mode,
+            )?;
             if !ok {
                 std::process::exit(1);
             }
