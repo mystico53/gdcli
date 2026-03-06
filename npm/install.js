@@ -63,7 +63,7 @@ async function main() {
   const { asset, binary } = getPlatformAsset();
   const url = `https://github.com/${REPO}/releases/latest/download/${asset}`;
 
-  console.log(`Downloading gdcli from ${url}...`);
+  console.error(`Downloading gdcli from ${url}...`);
 
   const tmpDir = path.join(__dirname, ".tmp");
   fs.mkdirSync(tmpDir, { recursive: true });
@@ -95,7 +95,7 @@ async function main() {
   // Clean up
   fs.rmSync(tmpDir, { recursive: true, force: true });
 
-  console.log(`gdcli installed to ${dest}`);
+  console.error(`gdcli installed to ${dest}`);
 }
 
 main().catch((err) => {
