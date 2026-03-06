@@ -26,7 +26,7 @@ gdcli must be on your PATH first — see [Install](#install) below.
 
 ### Why gdcli over godot-mcp
 
-Most Godot AI tooling runs everything through a Godot subprocess — every scene edit, every node addition, every property change spawns the engine. gdcli parses `.tscn` files directly, so the operations that agents call most often (add node, edit property, wire a texture) are instant filesystem I/O.
+Other Godot MCP tools launch the Godot engine for every operation — adding a node, changing a property, wiring a texture all wait for the engine to start up. gdcli reads and writes `.tscn` files directly, so those same operations take milliseconds instead of seconds.
 
 | | gdcli | godot-mcp |
 |---|---|---|
