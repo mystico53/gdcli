@@ -3,12 +3,62 @@ name: Release
 on:
   push:
     tags: ["v*"]
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  # Determine the version tag to use
+  resolve-version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      should_release: ${{ steps.tag.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version tag
+        id: tag
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            # Triggered by a manual tag push — use it directly
+            TAG="${GITHUB_REF#refs/tags/}"
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          else
+            # Triggered by push to main or workflow_dispatch — auto-increment patch
+            LATEST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+            if [ -z "$LATEST" ]; then
+              TAG="v0.1.0"
+            else
+              # Increment patch version
+              MAJOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f1)
+              MINOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f2)
+              PATCH=$(echo "$LATEST" | sed 's/v//' | cut -d. -f3)
+              PATCH=$((PATCH + 1))
+              TAG="v${MAJOR}.${MINOR}.${PATCH}"
+            fi
+
+            # Skip if HEAD is already tagged (avoid duplicate releases)
+            HEAD_TAGS=$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)
+            if [ -n "$HEAD_TAGS" ]; then
+              echo "HEAD already has a version tag ($HEAD_TAGS), skipping release"
+              echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+              echo "should_release=true" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+          echo "Resolved tag: $(cat "$GITHUB_OUTPUT")"
+
   build:
+    needs: resolve-version
+    if: needs.resolve-version.outputs.should_release == 'true'
     strategy:
       matrix:
         include:
@@ -73,10 +123,12 @@ jobs:
           path: gdcli
 
   release:
-    needs: [build, universal-macos]
+    needs: [resolve-version, build, universal-macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Download Windows binary
         uses: actions/download-artifact@v4
@@ -102,9 +154,17 @@ jobs:
           cd linux && chmod +x gdcli && tar czf ../gdcli-linux-x86_64.tar.gz gdcli && cd ..
           cd macos && chmod +x gdcli && tar czf ../gdcli-macos-universal.tar.gz gdcli && cd ..
 
+      - name: Create tag
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          TAG="${{ needs.resolve-version.outputs.tag }}"
+          git tag "$TAG"
+          git push origin "$TAG"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.resolve-version.outputs.tag }}
           generate_release_notes: true
           files: |
             gdcli-windows-x86_64.zip
