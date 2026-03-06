@@ -37,6 +37,12 @@ Most Godot AI tooling runs everything through a Godot subprocess — every scene
 
 Grab the latest release for your platform from the [Releases page](https://github.com/mystico53/gdcli/releases/latest) — Windows, Linux, and macOS (universal) binaries are available. Extract and add to your PATH.
 
+**Via npm (no Rust needed):**
+
+```sh
+npm install -g gdcli-godot
+```
+
 **From source:**
 
 ```sh
