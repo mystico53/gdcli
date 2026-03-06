@@ -55,6 +55,35 @@ curl -fsSL https://raw.githubusercontent.com/mystico53/gdcli/main/install.sh | s
 irm https://raw.githubusercontent.com/mystico53/gdcli/main/install.ps1 | iex
 ```
 
+## Add to your AI agent
+
+**Claude Code:**
+
+```bash
+claude mcp add --transport stdio gdcli -- gdcli mcp
+```
+
+**Cursor / VS Code / other MCP clients** — add to your MCP config:
+
+```json
+{
+  "mcpServers": {
+    "gdcli": {
+      "command": "gdcli",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+**All agents at once** (Claude Code, Cursor, VS Code, Codex, and more):
+
+```bash
+npx add-mcp gdcli -- gdcli mcp
+```
+
+gdcli must be on your PATH first — see [Install](#install) above.
+
 ## Prerequisites
 
 Godot 4 is required for commands that invoke the engine (`doctor`, `script lint`, `run`, `docs --build`). All other commands work without Godot installed.
