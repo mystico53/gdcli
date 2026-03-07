@@ -12,3 +12,4 @@ temp/
 .claude/
 .mcp.json
 *.stackdump
+tests/corpus/

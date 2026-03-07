@@ -310,6 +310,12 @@ Every PR should pass these before review:
 - `cargo clippy` — no warnings
 - Actually test the feature/fix with a real Godot project
 
+### Test suite
+
+Unit tests live alongside the source. Integration tests live in `tests/`:
+
+- **`tests/corpus_test.rs`** — round-trip idempotency test. Parses every `.tscn` file in a corpus of real Godot projects, writes it back, re-parses, writes again, and asserts the two outputs are identical. Run `bash tests/fetch_corpus.sh` to download the corpus (godot-demo-projects + tps-demo), then `cargo test --test corpus_test`. The corpus directory is gitignored and the test is skipped automatically if it's not present.
+
 ### Areas of contribution
 
 - New commands and features
