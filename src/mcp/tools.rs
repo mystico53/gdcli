@@ -480,6 +480,79 @@ pub fn all_tools() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
+            name: "node_reorder",
+            description: "Reorder a node within a scene file. Godot renders nodes in tree order, so this controls draw order. Specify one of: position (0-based index among siblings), before (node name), or after (node name).",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "scene": {
+                        "type": "string",
+                        "description": "Path to the .tscn file (accepts res:// paths)"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Name of the node to move"
+                    },
+                    "position": {
+                        "type": "string",
+                        "description": "0-based position among siblings (e.g. \"0\" for first)"
+                    },
+                    "before": {
+                        "type": "string",
+                        "description": "Move before this node"
+                    },
+                    "after": {
+                        "type": "string",
+                        "description": "Move after this node"
+                    }
+                },
+                "required": ["scene", "name"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDef {
+            name: "node_add_many",
+            description: "Add multiple nodes to a scene file in a single call. Each node object supports the same fields as node_add: name, node_type, parent, script, instance, props, sub_resource_type, sub_resource_props, sub_resource_property. Nodes are added sequentially, so earlier nodes can be parents of later ones.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "scene": {
+                        "type": "string",
+                        "description": "Path to the .tscn file (accepts res:// paths)"
+                    },
+                    "nodes": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": { "type": "string", "description": "Node name" },
+                                "node_type": { "type": "string", "description": "Node type (e.g. Sprite2D, Timer)" },
+                                "parent": { "type": "string", "description": "Parent node name (default: root)" },
+                                "script": { "type": "string", "description": "Script path (res://)" },
+                                "instance": { "type": "string", "description": "Instance a scene (res:// path)" },
+                                "props": {
+                                    "type": "array",
+                                    "items": { "type": "string" },
+                                    "description": "Properties as key=val strings"
+                                },
+                                "sub_resource_type": { "type": "string", "description": "Inline sub_resource type" },
+                                "sub_resource_props": {
+                                    "type": "array",
+                                    "items": { "type": "string" },
+                                    "description": "Sub_resource properties as key=val strings"
+                                },
+                                "sub_resource_property": { "type": "string", "description": "Property to wire sub_resource to" }
+                            },
+                            "required": ["name"]
+                        },
+                        "description": "Array of node definitions to add"
+                    }
+                },
+                "required": ["scene", "nodes"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDef {
             name: "connection_add",
             description: "Add a signal connection between nodes in a scene file",
             schema: json!({

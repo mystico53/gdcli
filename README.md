@@ -17,7 +17,7 @@ gdcli gives coding agents (and you) a structured, scriptable interface to Godot 
 # macOS / Linux
 claude mcp add --transport stdio gdcli -- npx -y gdcli-godot mcp
 
-# Windows
+# Windows (run from PowerShell, not Git Bash)
 claude mcp add --transport stdio gdcli -- cmd /c npx -y gdcli-godot mcp
 ```
 
@@ -29,6 +29,8 @@ claude mcp add --transport stdio gdcli -- cmd /c npx -y gdcli-godot mcp
 // Windows
 { "mcpServers": { "gdcli": { "command": "cmd", "args": ["/c", "npx", "-y", "gdcli-godot", "mcp"] } } }
 ```
+
+> **Windows + Git Bash note:** If `claude mcp add` fails with a "cmd C:/" error, Git Bash is converting `/c` to a path. Either run the command from PowerShell, or add the JSON config above directly to `~/.claude.json` under `projects.<your-project>.mcpServers`.
 
 **Using native binary (faster startup, requires [Install](#install) first):**
 ```bash

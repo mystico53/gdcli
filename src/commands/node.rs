@@ -1,5 +1,6 @@
 use anyhow::{bail, Result};
 use serde::Serialize;
+use serde_json::Value;
 use std::path::Path;
 
 use crate::output;
@@ -204,6 +205,204 @@ pub fn run_remove(scene_path: &str, node_name: &str, json_mode: bool) -> Result<
         println!(
             "  \u{2713} Removed {} node(s) from {}",
             removed_count, scene_path
+        );
+    }
+
+    Ok(true)
+}
+
+// --- node reorder ---
+
+#[derive(Serialize)]
+pub struct NodeReorderReport {
+    pub scene: String,
+    pub node: String,
+    pub moved: bool,
+}
+
+pub fn run_reorder(
+    scene_path: &str,
+    node_name: &str,
+    position: Option<&str>,
+    before: Option<&str>,
+    after: Option<&str>,
+    json_mode: bool,
+) -> Result<bool> {
+    project_util::ensure_project_context(Some(Path::new(scene_path)))?;
+    let path = Path::new(scene_path);
+    if !path.is_file() {
+        bail!("Scene file not found: {}", scene_path);
+    }
+    scene_parser::require_scene_file(path)?;
+
+    let pos = position.map(|p| p.parse::<usize>()).transpose().map_err(|_| {
+        anyhow::anyhow!("position must be a non-negative integer")
+    })?;
+
+    if pos.is_none() && before.is_none() && after.is_none() {
+        bail!("Must specify one of: position, before, or after");
+    }
+
+    scene_parser::reorder_node_in_file(path, node_name, pos, before, after)?;
+
+    if json_mode {
+        let report = NodeReorderReport {
+            scene: scene_path.to_string(),
+            node: node_name.to_string(),
+            moved: true,
+        };
+        let envelope = output::JsonEnvelope {
+            ok: true,
+            command: "node reorder".into(),
+            data: Some(report),
+            error: None,
+        };
+        output::emit_json(&envelope);
+    } else {
+        println!(
+            "  \u{2713} Reordered node '{}' in {}",
+            node_name, scene_path
+        );
+    }
+
+    Ok(true)
+}
+
+// --- node add_many ---
+
+#[derive(Serialize)]
+pub struct NodeAddManyReport {
+    pub scene: String,
+    pub added: Vec<String>,
+    pub count: usize,
+}
+
+pub fn run_add_many(
+    scene_path: &str,
+    nodes: &[Value],
+    json_mode: bool,
+) -> Result<bool> {
+    project_util::ensure_project_context(Some(Path::new(scene_path)))?;
+    let path = Path::new(scene_path);
+    if !path.is_file() {
+        bail!("Scene file not found: {}", scene_path);
+    }
+    scene_parser::require_scene_file(path)?;
+
+    let mut added_names = Vec::new();
+
+    for node_def in nodes {
+        let name = node_def
+            .get("name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Each node must have a 'name' field"))?;
+        let node_type = node_def.get("node_type").and_then(|v| v.as_str());
+        let parent = node_def.get("parent").and_then(|v| v.as_str());
+        let script = node_def.get("script").and_then(|v| v.as_str());
+        let instance = node_def.get("instance").and_then(|v| v.as_str());
+
+        if node_type.is_none() && instance.is_none() {
+            bail!("Node '{}': either node_type or instance must be provided", name);
+        }
+
+        let props_raw: Vec<String> = node_def
+            .get("props")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let parsed_props: Vec<(String, String)> = props_raw
+            .iter()
+            .filter_map(|p| {
+                let parts: Vec<&str> = p.splitn(2, '=').collect();
+                if parts.len() == 2 {
+                    Some((
+                        parts[0].to_string(),
+                        scene_parser::format_prop_value(parts[1]),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Handle inline sub_resource
+        let sub_resource_type = node_def.get("sub_resource_type").and_then(|v| v.as_str());
+        let sub_resource_property = node_def.get("sub_resource_property").and_then(|v| v.as_str());
+        let sub_props_raw: Vec<String> = node_def
+            .get("sub_resource_props")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let parsed_sub_props: Vec<(String, String)> = sub_props_raw
+            .iter()
+            .filter_map(|p| {
+                let parts: Vec<&str> = p.splitn(2, '=').collect();
+                if parts.len() == 2 {
+                    Some((
+                        parts[0].to_string(),
+                        scene_parser::format_prop_value(parts[1]),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let mut all_props = parsed_props;
+
+        if let Some(sr_type) = sub_resource_type {
+            let wire_prop = sub_resource_property
+                .map(String::from)
+                .or_else(|| node_type.and_then(infer_wire_property).map(String::from))
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Cannot infer wire property for node '{}' type '{}'. Use sub_resource_property.",
+                        name,
+                        node_type.unwrap_or("(none)")
+                    )
+                })?;
+
+            let sub_id =
+                scene_parser::add_sub_resource_to_file(path, sr_type, &parsed_sub_props, None, None)?;
+            all_props.push((wire_prop, format!("SubResource(\"{}\")", sub_id)));
+        }
+
+        scene_parser::add_node_to_file(
+            path, node_type, name, parent, script, &all_props, instance,
+        )?;
+
+        added_names.push(name.to_string());
+    }
+
+    let count = added_names.len();
+
+    if json_mode {
+        let report = NodeAddManyReport {
+            scene: scene_path.to_string(),
+            added: added_names,
+            count,
+        };
+        let envelope = output::JsonEnvelope {
+            ok: true,
+            command: "node add_many".into(),
+            data: Some(report),
+            error: None,
+        };
+        output::emit_json(&envelope);
+    } else {
+        println!(
+            "  \u{2713} Added {} node(s) to {}",
+            count, scene_path
         );
     }
 

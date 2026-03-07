@@ -628,11 +628,6 @@ pub fn add_node_to_file(
 
     let scene = parse_scene_text(&content)?;
 
-    // Check for duplicate node name
-    if scene.nodes.iter().any(|n| n.name == node_name) {
-        anyhow::bail!("Node '{}' already exists in scene", node_name);
-    }
-
     // Determine parent path
     let parent_ref = if let Some(p) = parent {
         // Find the parent node and compute its path for child references
@@ -646,6 +641,19 @@ pub fn add_node_to_file(
         // Default to root
         ".".to_string()
     };
+
+    // Check for duplicate node name under the same parent (Godot allows same names under different parents)
+    if scene.nodes.iter().any(|n| n.name == node_name && n.parent.as_deref() == Some(&parent_ref)) {
+        anyhow::bail!(
+            "Node '{}' already exists under parent '{}' in scene",
+            node_name,
+            parent_ref
+        );
+    }
+    // Also check against root (which has no parent field)
+    if parent_ref == "." && scene.nodes.first().map(|n| n.name.as_str()) == Some(node_name) {
+        anyhow::bail!("Node '{}' is the root node", node_name);
+    }
 
     let mut new_content = content.clone();
     let mut ext_resource_count = scene.ext_resources.len();
@@ -841,6 +849,187 @@ pub fn remove_node_from_file(path: &Path, node_name: &str) -> anyhow::Result<Vec
     atomic_write(path, &new_content)?;
 
     Ok(names_to_remove)
+}
+
+/// Reorder a node within a .tscn file.
+/// Supports: `before` another node, `after` another node, or numeric `position` (0-based among siblings).
+pub fn reorder_node_in_file(
+    path: &Path,
+    node_name: &str,
+    position: Option<usize>,
+    before: Option<&str>,
+    after: Option<&str>,
+) -> anyhow::Result<()> {
+    require_scene_file(path)?;
+    let content = fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path.display(), e))?;
+
+    let scene = parse_scene_text(&content)?;
+
+    // Verify node exists and is not the root
+    let target = scene
+        .nodes
+        .iter()
+        .find(|n| n.name == node_name)
+        .ok_or_else(|| anyhow::anyhow!("Node '{}' not found in scene", node_name))?;
+
+    if target.parent.is_none() {
+        anyhow::bail!("Cannot reorder root node '{}'", node_name);
+    }
+
+    // Extract the node's text block (from [node ...] to next section or EOF)
+    let lines: Vec<&str> = content.lines().collect();
+    let mut node_blocks: Vec<(String, usize, usize)> = Vec::new(); // (name, start_line, end_line)
+
+    let mut i = 0;
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+        if trimmed.starts_with("[node ") {
+            let name = extract_quoted_attr(trimmed, "name").unwrap_or_default();
+            let start = i;
+            i += 1;
+            // Find end of this node block (next section header or connection or EOF)
+            while i < lines.len() {
+                let t = lines[i].trim();
+                if t.starts_with('[') {
+                    break;
+                }
+                i += 1;
+            }
+            // Trim trailing blank lines from the block
+            let mut end = i;
+            while end > start + 1 && lines[end - 1].trim().is_empty() {
+                end -= 1;
+            }
+            node_blocks.push((name, start, end));
+        } else {
+            i += 1;
+        }
+    }
+
+    // Find the target block
+    let target_idx = node_blocks
+        .iter()
+        .position(|(name, _, _)| name == node_name)
+        .ok_or_else(|| anyhow::anyhow!("Node '{}' block not found in scene text", node_name))?;
+
+    // Root is always index 0, skip it for sibling calculation
+    if target_idx == 0 {
+        anyhow::bail!("Cannot reorder root node");
+    }
+
+    // Get the target node's parent path to find siblings
+    let target_parent = target.parent.as_deref().unwrap();
+    let sibling_indices: Vec<usize> = node_blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, (name, _, _))| {
+            if let Some(n) = scene.nodes.iter().find(|n| n.name == *name) {
+                n.parent.as_deref() == Some(target_parent)
+            } else {
+                false
+            }
+        })
+        .map(|(i, _)| i)
+        .collect();
+
+    // Determine where to insert
+    let new_block_idx = if let Some(ref_name) = before {
+        node_blocks
+            .iter()
+            .position(|(name, _, _)| name == ref_name)
+            .ok_or_else(|| anyhow::anyhow!("Reference node '{}' not found", ref_name))?
+    } else if let Some(ref_name) = after {
+        let ref_idx = node_blocks
+            .iter()
+            .position(|(name, _, _)| name == ref_name)
+            .ok_or_else(|| anyhow::anyhow!("Reference node '{}' not found", ref_name))?;
+        ref_idx + 1
+    } else if let Some(pos) = position {
+        // Position among siblings
+        if pos >= sibling_indices.len() {
+            // Put at end — after last sibling
+            *sibling_indices.last().unwrap() + 1
+        } else {
+            sibling_indices[pos]
+        }
+    } else {
+        anyhow::bail!("Must specify one of: position, before, or after");
+    };
+
+    if new_block_idx == target_idx || new_block_idx == target_idx + 1 {
+        // Already in the right position
+        return Ok(());
+    }
+
+    // Extract lines for the target block (include trailing blank line if present)
+    let (_, start, end) = &node_blocks[target_idx];
+    let mut target_lines: Vec<&str> = lines[*start..*end].to_vec();
+    target_lines.push(""); // blank separator
+
+    // Build new content: remove the target block, then insert at new position
+    // First, mark which lines belong to the target block (including trailing blanks)
+    let remove_start = *start;
+    let mut remove_end = *end;
+    // Include trailing blank lines after the block
+    while remove_end < lines.len() && lines[remove_end].trim().is_empty() {
+        remove_end += 1;
+    }
+
+    let mut new_lines: Vec<&str> = Vec::new();
+    let mut inserted = false;
+
+    // Calculate the insert point in terms of lines
+    let insert_line = if new_block_idx >= node_blocks.len() {
+        // After last node block — find the connection section or EOF
+        let last = &node_blocks[node_blocks.len() - 1];
+        let mut pos = last.2;
+        while pos < lines.len() && lines[pos].trim().is_empty() {
+            pos += 1;
+        }
+        pos
+    } else {
+        node_blocks[new_block_idx].1
+    };
+
+    // Adjust insert_line if it's after the removed block
+    let adjusted_insert_line = if insert_line > remove_start {
+        insert_line - (remove_end - remove_start)
+    } else {
+        insert_line
+    };
+
+    // Remove the target block lines
+    let mut filtered_lines: Vec<&str> = Vec::new();
+    for (idx, line) in lines.iter().enumerate() {
+        if idx >= remove_start && idx < remove_end {
+            continue;
+        }
+        filtered_lines.push(line);
+    }
+
+    // Insert at the adjusted position
+    for (idx, line) in filtered_lines.iter().enumerate() {
+        if idx == adjusted_insert_line && !inserted {
+            for tl in &target_lines {
+                new_lines.push(tl);
+            }
+            inserted = true;
+        }
+        new_lines.push(line);
+    }
+    if !inserted {
+        for tl in &target_lines {
+            new_lines.push(tl);
+        }
+    }
+
+    let mut new_content = new_lines.join("\n");
+    if !new_content.ends_with('\n') {
+        new_content.push('\n');
+    }
+
+    atomic_write(path, &new_content)
 }
 
 /// Edit a node property in a .tscn file.
@@ -1051,6 +1240,11 @@ pub fn atomic_write(path: &Path, content: &str) -> anyhow::Result<()> {
 pub fn format_prop_value(value: &str) -> String {
     // Already quoted — return as-is to avoid double-quoting
     if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
+        return value.to_string();
+    }
+
+    // StringName: &"name" — pass through
+    if value.starts_with("&\"") && value.ends_with('"') {
         return value.to_string();
     }
 
@@ -1469,6 +1663,24 @@ visible = false
         assert_eq!(format_prop_value("\"res://foo.gd\""), "\"res://foo.gd\"");
         assert_eq!(format_prop_value("\"hello world\""), "\"hello world\"");
         assert_eq!(format_prop_value("\"\""), "\"\"");
+        // StringName — starts with & and contains parens-like syntax
+        assert_eq!(format_prop_value("&\"my_name\""), "&\"my_name\"");
+        // NodePath — contains parens, pass through
+        assert_eq!(
+            format_prop_value("NodePath(\"Player/Sprite\")"),
+            "NodePath(\"Player/Sprite\")"
+        );
+        // Scientific notation — parses as float
+        assert_eq!(format_prop_value("1.5e-4"), "1.5e-4");
+        // Negative integer
+        assert_eq!(format_prop_value("-7"), "-7");
+        // Packed arrays — contain parens, pass through
+        assert_eq!(
+            format_prop_value("PackedByteArray(1, 2, 255)"),
+            "PackedByteArray(1, 2, 255)"
+        );
+        // RID() — contains parens
+        assert_eq!(format_prop_value("RID()"), "RID()");
     }
 
     #[test]
@@ -1652,6 +1864,276 @@ size = Vector2(30, 30)
 
         let _ = std::fs::remove_file(&scene_path);
         let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn test_edit_node_property_existing() {
+        let dir = std::env::temp_dir().join("gdcli_test_edit_prop_existing");
+        let _ = std::fs::create_dir_all(&dir);
+        let scene_path = dir.join("test.tscn");
+
+        let content = "[gd_scene format=3 uid=\"uid://abc\"]\n\n\
+            [node name=\"Root\" type=\"Node2D\"]\n\
+            position = Vector2(100, 200)\n\
+            visible = false\n";
+        std::fs::write(&scene_path, content).unwrap();
+
+        edit_node_property(&scene_path, "Root", "position", "Vector2(50, 75)").unwrap();
+
+        let result = std::fs::read_to_string(&scene_path).unwrap();
+        assert!(result.contains("position = Vector2(50, 75)"));
+        // Other property should be intact
+        assert!(result.contains("visible = false"));
+        // Old value should be gone
+        assert!(!result.contains("Vector2(100, 200)"));
+
+        let _ = std::fs::remove_file(&scene_path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn test_edit_node_property_new() {
+        let dir = std::env::temp_dir().join("gdcli_test_edit_prop_new");
+        let _ = std::fs::create_dir_all(&dir);
+        let scene_path = dir.join("test.tscn");
+
+        let content = "[gd_scene format=3 uid=\"uid://abc\"]\n\n\
+            [node name=\"Root\" type=\"Node2D\"]\n\
+            position = Vector2(0, 0)\n";
+        std::fs::write(&scene_path, content).unwrap();
+
+        edit_node_property(&scene_path, "Root", "visible", "false").unwrap();
+
+        let result = std::fs::read_to_string(&scene_path).unwrap();
+        assert!(result.contains("visible = false"));
+        // Existing property should be intact
+        assert!(result.contains("position = Vector2(0, 0)"));
+
+        let _ = std::fs::remove_file(&scene_path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn test_edit_node_property_nonexistent_node() {
+        let dir = std::env::temp_dir().join("gdcli_test_edit_prop_nonode");
+        let _ = std::fs::create_dir_all(&dir);
+        let scene_path = dir.join("test.tscn");
+
+        let content = "[gd_scene format=3 uid=\"uid://abc\"]\n\n\
+            [node name=\"Root\" type=\"Node2D\"]\n";
+        std::fs::write(&scene_path, content).unwrap();
+
+        let err = edit_node_property(&scene_path, "NonExistent", "visible", "false");
+        assert!(err.is_err());
+        assert!(err.unwrap_err().to_string().contains("not found"));
+
+        let _ = std::fs::remove_file(&scene_path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn test_remove_node_and_children() {
+        let dir = std::env::temp_dir().join("gdcli_test_remove_children");
+        let _ = std::fs::create_dir_all(&dir);
+        let scene_path = dir.join("test.tscn");
+
+        let content = "[gd_scene format=3 uid=\"uid://abc\"]\n\n\
+            [node name=\"Root\" type=\"Node2D\"]\n\n\
+            [node name=\"Parent\" type=\"Node2D\" parent=\".\"]\n\n\
+            [node name=\"Child\" type=\"Sprite2D\" parent=\"Parent\"]\n\n\
+            [node name=\"Sibling\" type=\"Label\" parent=\".\"]\n\n\
+            [connection signal=\"pressed\" from=\"Parent\" to=\".\" method=\"_on_parent\"]\n";
+        std::fs::write(&scene_path, content).unwrap();
+
+        let removed = remove_node_from_file(&scene_path, "Parent").unwrap();
+        assert!(removed.contains(&"Parent".to_string()));
+        assert!(removed.contains(&"Child".to_string()));
+        assert!(!removed.contains(&"Sibling".to_string()));
+
+        let result = std::fs::read_to_string(&scene_path).unwrap();
+        let parsed = parse_scene_text(&result).unwrap();
+        let node_names: Vec<&str> = parsed.nodes.iter().map(|n| n.name.as_str()).collect();
+        assert!(!node_names.contains(&"Parent"));
+        assert!(!node_names.contains(&"Child"));
+        assert!(node_names.contains(&"Sibling"));
+
+        let _ = std::fs::remove_file(&scene_path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn test_remove_root_node_fails() {
+        let dir = std::env::temp_dir().join("gdcli_test_remove_root");
+        let _ = std::fs::create_dir_all(&dir);
+        let scene_path = dir.join("test.tscn");
+
+        let content = "[gd_scene format=3 uid=\"uid://abc\"]\n\n\
+            [node name=\"Root\" type=\"Node2D\"]\n";
+        std::fs::write(&scene_path, content).unwrap();
+
+        let err = remove_node_from_file(&scene_path, "Root");
+        assert!(err.is_err());
+        assert!(err.unwrap_err().to_string().contains("Cannot remove root"));
+
+        let _ = std::fs::remove_file(&scene_path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn test_edit_sub_resource_property() {
+        let dir = std::env::temp_dir().join("gdcli_test_edit_subres");
+        let _ = std::fs::create_dir_all(&dir);
+        let scene_path = dir.join("test.tscn");
+
+        let content = "[gd_scene load_steps=2 format=3 uid=\"uid://abc\"]\n\n\
+            [sub_resource type=\"CircleShape2D\" id=\"Shape_123\"]\n\
+            radius = 20.0\n\n\
+            [node name=\"Root\" type=\"Node2D\"]\n";
+        std::fs::write(&scene_path, content).unwrap();
+
+        edit_sub_resource_property(&scene_path, "Shape_123", "radius", "35.0").unwrap();
+
+        let result = std::fs::read_to_string(&scene_path).unwrap();
+        assert!(result.contains("radius = 35.0"));
+        assert!(!result.contains("radius = 20.0"));
+
+        let _ = std::fs::remove_file(&scene_path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn test_add_ext_resource_to_file() {
+        let dir = std::env::temp_dir().join("gdcli_test_add_ext_res");
+        let _ = std::fs::create_dir_all(&dir);
+        let scene_path = dir.join("test.tscn");
+
+        let content = "[gd_scene format=3 uid=\"uid://abc\"]\n\n\
+            [node name=\"Root\" type=\"Node2D\"]\n";
+        std::fs::write(&scene_path, content).unwrap();
+
+        let ext_id =
+            add_ext_resource_to_file(&scene_path, "res://scripts/player.gd", "Script").unwrap();
+        assert!(!ext_id.is_empty());
+
+        let result = std::fs::read_to_string(&scene_path).unwrap();
+        let parsed = parse_scene_text(&result).unwrap();
+
+        assert_eq!(parsed.ext_resources.len(), 1);
+        assert_eq!(parsed.ext_resources[0].path, "res://scripts/player.gd");
+        assert_eq!(parsed.ext_resources[0].resource_type, "Script");
+        // load_steps should be updated
+        assert!(result.contains("load_steps=2"));
+
+        // Adding the same resource again should return existing ID
+        let ext_id2 =
+            add_ext_resource_to_file(&scene_path, "res://scripts/player.gd", "Script").unwrap();
+        assert_eq!(ext_id, ext_id2);
+
+        // Adding a different resource should work
+        let ext_id3 =
+            add_ext_resource_to_file(&scene_path, "res://icon.png", "Texture2D").unwrap();
+        assert_ne!(ext_id, ext_id3);
+
+        let result2 = std::fs::read_to_string(&scene_path).unwrap();
+        let parsed2 = parse_scene_text(&result2).unwrap();
+        assert_eq!(parsed2.ext_resources.len(), 2);
+        assert!(result2.contains("load_steps=3"));
+
+        let _ = std::fs::remove_file(&scene_path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn test_infer_resource_type() {
+        let cases = vec![
+            ("res://player.gd", "Script"),
+            ("res://level.tscn", "PackedScene"),
+            ("res://data.tres", "Resource"),
+            ("res://icon.png", "Texture2D"),
+            ("res://bg.jpg", "Texture2D"),
+            ("res://photo.webp", "Texture2D"),
+            ("res://logo.svg", "Texture2D"),
+            ("res://music.ogg", "AudioStream"),
+            ("res://sfx.wav", "AudioStream"),
+            ("res://font.ttf", "FontFile"),
+            ("res://shader.gdshader", "Shader"),
+            ("res://unknown.xyz", "Resource"),
+        ];
+        for (path, expected) in cases {
+            assert_eq!(
+                infer_resource_type(path),
+                expected,
+                "Failed for path: {}",
+                path
+            );
+        }
+    }
+
+    #[test]
+    fn test_write_scene_roundtrip_exact() {
+        let content = r#"[gd_scene load_steps=3 format=3 uid="uid://roundtrip"]
+
+[ext_resource type="Script" uid="uid://script1" path="res://main.gd" id="1_abc"]
+
+[sub_resource type="RectangleShape2D" id="Shape_xyz"]
+size = Vector2(40, 40)
+
+[node name="Root" type="Node2D"]
+script = ExtResource("1_abc")
+
+[node name="Child" type="Sprite2D" parent="."]
+position = Vector2(100, 200)
+visible = false
+
+[connection signal="pressed" from="Child" to="." method="_on_pressed"]
+"#;
+        let scene1 = parse_scene_text(content).unwrap();
+        let written = write_scene(&scene1);
+        let scene2 = parse_scene_text(&written).unwrap();
+
+        // Structural equality
+        assert_eq!(scene1.uid, scene2.uid);
+        assert_eq!(scene1.format, scene2.format);
+        assert_eq!(scene1.ext_resources.len(), scene2.ext_resources.len());
+        assert_eq!(scene1.sub_resources.len(), scene2.sub_resources.len());
+        assert_eq!(scene1.nodes.len(), scene2.nodes.len());
+        assert_eq!(scene1.connections.len(), scene2.connections.len());
+
+        for (a, b) in scene1.ext_resources.iter().zip(scene2.ext_resources.iter()) {
+            assert_eq!(a.id, b.id);
+            assert_eq!(a.resource_type, b.resource_type);
+            assert_eq!(a.path, b.path);
+            assert_eq!(a.uid, b.uid);
+        }
+
+        for (a, b) in scene1.sub_resources.iter().zip(scene2.sub_resources.iter()) {
+            assert_eq!(a.id, b.id);
+            assert_eq!(a.resource_type, b.resource_type);
+            assert_eq!(a.properties.len(), b.properties.len());
+            for (pa, pb) in a.properties.iter().zip(b.properties.iter()) {
+                assert_eq!(pa.key, pb.key);
+                assert_eq!(pa.value, pb.value);
+            }
+        }
+
+        for (a, b) in scene1.nodes.iter().zip(scene2.nodes.iter()) {
+            assert_eq!(a.name, b.name);
+            assert_eq!(a.node_type, b.node_type);
+            assert_eq!(a.parent, b.parent);
+            assert_eq!(a.instance, b.instance);
+            assert_eq!(a.properties.len(), b.properties.len());
+            for (pa, pb) in a.properties.iter().zip(b.properties.iter()) {
+                assert_eq!(pa.key, pb.key);
+                assert_eq!(pa.value, pb.value);
+            }
+        }
+
+        for (a, b) in scene1.connections.iter().zip(scene2.connections.iter()) {
+            assert_eq!(a.signal, b.signal);
+            assert_eq!(a.from, b.from);
+            assert_eq!(a.to, b.to);
+            assert_eq!(a.method, b.method);
+        }
     }
 
     #[test]

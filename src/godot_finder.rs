@@ -39,7 +39,7 @@ fn find_binary() -> Result<PathBuf> {
         return Ok(prefer_console_exe(&p));
     }
 
-    // 3. Common Windows paths
+    // 3. Common Windows paths (including versioned executables)
     #[cfg(target_os = "windows")]
     {
         let candidates = [
@@ -55,11 +55,73 @@ fn find_binary() -> Result<PathBuf> {
             }
         }
 
+        // Scan common directories for versioned Godot executables
+        // (e.g. C:\Godot\Godot_v4.6.1-stable_win64.exe)
+        let scan_dirs = [
+            r"C:\Godot",
+            r"C:\Program Files\Godot",
+        ];
+        for dir in &scan_dirs {
+            if let Some(found) = find_versioned_godot(Path::new(dir)) {
+                return Ok(prefer_console_exe(&found));
+            }
+        }
+
         // Check %APPDATA%\Godot
         if let Ok(appdata) = std::env::var("APPDATA") {
-            let p = PathBuf::from(&appdata).join("Godot").join("godot.exe");
+            let appdata_godot = PathBuf::from(&appdata).join("Godot");
+            let p = appdata_godot.join("godot.exe");
             if p.is_file() {
                 return Ok(prefer_console_exe(&p));
+            }
+            if let Some(found) = find_versioned_godot(&appdata_godot) {
+                return Ok(prefer_console_exe(&found));
+            }
+        }
+
+        // Check %LOCALAPPDATA%\Godot
+        if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
+            let local_godot = PathBuf::from(&localappdata).join("Godot");
+            if let Some(found) = find_versioned_godot(&local_godot) {
+                return Ok(prefer_console_exe(&found));
+            }
+        }
+
+        // Check user's home directories
+        if let Ok(userprofile) = std::env::var("USERPROFILE") {
+            let home_dirs = [
+                PathBuf::from(&userprofile).join("Godot"),
+                PathBuf::from(&userprofile).join("scoop").join("apps").join("godot"),
+            ];
+            for dir in &home_dirs {
+                if let Some(found) = find_versioned_godot(dir) {
+                    return Ok(prefer_console_exe(&found));
+                }
+            }
+        }
+    }
+
+    // 3. Common macOS/Linux paths
+    #[cfg(not(target_os = "windows"))]
+    {
+        let candidates = [
+            "/usr/local/bin/godot",
+            "/usr/bin/godot",
+            "/opt/godot/godot",
+        ];
+        for candidate in &candidates {
+            let p = PathBuf::from(candidate);
+            if p.is_file() {
+                return Ok(p);
+            }
+        }
+
+        // macOS: check Applications
+        #[cfg(target_os = "macos")]
+        {
+            let app_path = PathBuf::from("/Applications/Godot.app/Contents/MacOS/Godot");
+            if app_path.is_file() {
+                return Ok(app_path);
             }
         }
     }
@@ -70,6 +132,33 @@ fn find_binary() -> Result<PathBuf> {
          set GODOT_PATH=C:\\path\\to\\godot.exe\n\n\
          Or add Godot to your PATH."
     );
+}
+
+/// Scan a directory for versioned Godot executables (e.g. Godot_v4.6.1-stable_win64.exe).
+/// Returns the newest version found, preferring console executables.
+#[cfg(target_os = "windows")]
+fn find_versioned_godot(dir: &Path) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    let mut best: Option<PathBuf> = None;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = path.file_name()?.to_string_lossy().to_lowercase();
+        // Match patterns like "godot_v4.6.1-stable_win64.exe" or "Godot_v4.4-stable_win64.exe"
+        if name.starts_with("godot") && name.ends_with(".exe") && !name.contains("console") {
+            // Prefer newer versions (lexicographic comparison works for Godot versioning)
+            if best.as_ref().map_or(true, |b| {
+                path.file_name().unwrap().to_string_lossy() > b.file_name().unwrap().to_string_lossy()
+            }) {
+                best = Some(path);
+            }
+        }
+    }
+
+    best
 }
 
 /// On Windows, the GUI `.exe` doesn't write to stdout. If a `.console.exe`

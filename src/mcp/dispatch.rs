@@ -37,6 +37,9 @@ pub fn call_tool(name: &str, args: &Value) -> ToolResult {
         "load_sprite" => dispatch_load_sprite(args),
         "connection_add" => dispatch_connection_add(args),
         "connection_remove" => dispatch_connection_remove(args),
+        "project_init" => dispatch_project_init(args),
+        "node_reorder" => dispatch_node_reorder(args),
+        "node_add_many" => dispatch_node_add_many(args),
         _ => Err(anyhow::anyhow!("Unknown tool: {}", name)),
     };
 
@@ -414,4 +417,41 @@ fn dispatch_run_stop(args: &Value) -> anyhow::Result<bool> {
 
 fn dispatch_docs_build() -> anyhow::Result<bool> {
     commands::docs::run_build(true)
+}
+
+fn dispatch_project_init(args: &Value) -> anyhow::Result<bool> {
+    let path = str_arg(args, "path");
+    let name = str_arg(args, "name");
+    let godot_version = str_arg(args, "godot_version");
+    let renderer = str_arg(args, "renderer");
+    let force = bool_arg(args, "force");
+    commands::project::run_init(
+        path.as_deref(),
+        name.as_deref(),
+        godot_version.as_deref(),
+        renderer.as_deref(),
+        force,
+        true,
+    )
+}
+
+fn dispatch_node_reorder(args: &Value) -> anyhow::Result<bool> {
+    let scene =
+        path_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
+    let name =
+        str_arg(args, "name").ok_or_else(|| anyhow::anyhow!("missing required arg: name"))?;
+    let position = str_arg(args, "position");
+    let before = str_arg(args, "before");
+    let after = str_arg(args, "after");
+    commands::node::run_reorder(&scene, &name, position.as_deref(), before.as_deref(), after.as_deref(), true)
+}
+
+fn dispatch_node_add_many(args: &Value) -> anyhow::Result<bool> {
+    let scene =
+        path_arg(args, "scene").ok_or_else(|| anyhow::anyhow!("missing required arg: scene"))?;
+    let nodes = args
+        .get("nodes")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| anyhow::anyhow!("missing required arg: nodes"))?;
+    commands::node::run_add_many(&scene, nodes, true)
 }

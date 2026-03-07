@@ -287,9 +287,11 @@ enum NodeAction {
         scene: String,
 
         /// Node type (e.g. Sprite2D, Timer, Node2D) — required unless --instance is used
+        #[arg(long = "node-type")]
         node_type: Option<String>,
 
         /// Name for the new node
+        #[arg(long)]
         name: String,
 
         /// Parent node name (default: root node)
@@ -328,6 +330,27 @@ enum NodeAction {
 
         /// Name of the node to remove
         name: String,
+    },
+
+    /// Reorder a node within a scene file (controls draw/process order)
+    Reorder {
+        /// Path to the .tscn file
+        scene: String,
+
+        /// Name of the node to move
+        name: String,
+
+        /// 0-based position among siblings
+        #[arg(long)]
+        position: Option<String>,
+
+        /// Move before this node
+        #[arg(long)]
+        before: Option<String>,
+
+        /// Move after this node
+        #[arg(long)]
+        after: Option<String>,
     },
 }
 
@@ -584,6 +607,20 @@ fn run(command: Commands, json_mode: bool) -> anyhow::Result<()> {
                 NodeAction::Remove { scene, name } => {
                     commands::node::run_remove(scene, name, json_mode)?
                 }
+                NodeAction::Reorder {
+                    scene,
+                    name,
+                    position,
+                    before,
+                    after,
+                } => commands::node::run_reorder(
+                    scene,
+                    name,
+                    position.as_deref(),
+                    before.as_deref(),
+                    after.as_deref(),
+                    json_mode,
+                )?
             };
             if !ok {
                 std::process::exit(1);

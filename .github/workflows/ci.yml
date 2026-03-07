@@ -8,7 +8,10 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -23,6 +26,9 @@ jobs:
 
       - name: cargo test
         run: cargo test
+
+      - name: cargo test (release)
+        run: cargo test --release
 
       - name: cargo clippy
         run: cargo clippy -- -D warnings

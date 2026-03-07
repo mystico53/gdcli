@@ -183,7 +183,7 @@ mod tests {
         let resp = handle_request(&req);
         let parsed: Value = serde_json::from_str(&resp).unwrap();
         let tools = parsed["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 24);
+        assert_eq!(tools.len(), 26);
     }
 
     #[test]
