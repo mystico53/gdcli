@@ -1,0 +1,6 @@
+[gd_scene format=3]
+
+[node name="Legacy" type="Node2D"]
+
+[node name="Child" type="Label" parent="."]
+text = "Hello"
