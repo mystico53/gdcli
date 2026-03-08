@@ -9,4 +9,5 @@ pub mod scene;
 pub mod script;
 pub mod sprite;
 pub mod sub_resource;
+pub mod setup;
 pub mod uid;

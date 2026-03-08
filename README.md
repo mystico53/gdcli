@@ -12,7 +12,17 @@ gdcli gives coding agents (and you) a structured, scriptable interface to Godot 
 
 ## Add to your AI agent
 
-**Claude Code (one command, no install needed):**
+**Automatic setup (recommended):**
+```bash
+npx -y gdcli-godot setup claude-code   # Claude Code
+npx -y gdcli-godot setup cursor        # Cursor
+npx -y gdcli-godot setup vscode        # VS Code
+npx -y gdcli-godot setup json          # Print config for manual use
+```
+
+Setup auto-detects your platform and writes the correct config — no manual JSON editing needed.
+
+**Manual setup (Claude Code):**
 ```bash
 # macOS / Linux
 claude mcp add --transport stdio gdcli -- npx -y gdcli-godot mcp
@@ -21,16 +31,14 @@ claude mcp add --transport stdio gdcli -- npx -y gdcli-godot mcp
 claude mcp add --transport stdio gdcli -- cmd /c npx -y gdcli-godot mcp
 ```
 
-**Cursor / VS Code / other MCP clients** — add to your MCP config:
+**Manual setup (Cursor / VS Code / other MCP clients)** — add to your MCP config:
 ```json
 // macOS / Linux
 { "mcpServers": { "gdcli": { "command": "npx", "args": ["-y", "gdcli-godot", "mcp"] } } }
 
 // Windows
-{ "mcpServers": { "gdcli": { "command": "cmd", "args": ["/c", "npx", "-y", "gdcli-godot", "mcp"] } } }
+{ "mcpServers": { "gdcli": { "command": "npx.cmd", "args": ["-y", "gdcli-godot", "mcp"] } } }
 ```
-
-> **Windows + Git Bash note:** If `claude mcp add` fails with a "cmd C:/" error, Git Bash is converting `/c` to a path. Either run the command from PowerShell, or add the JSON config above directly to `~/.claude.json` under `projects.<your-project>.mcpServers`.
 
 **Using native binary (faster startup, requires [Install](#install) first):**
 ```bash
@@ -177,6 +185,15 @@ Run `gdcli doctor` to verify your setup.
 | `gdcli run --timeout 60 --scene res://levels/test.tscn` | Run a specific scene with custom timeout |
 
 **Streaming sessions (MCP):** For non-blocking execution, use `run_start` / `run_read` / `run_stop` via MCP. The agent starts Godot in the background, continues editing files, then polls for output — no server blocking.
+
+### Setup
+
+| Command | Description |
+|---|---|
+| `gdcli setup claude-code` | Configure MCP server for Claude Code |
+| `gdcli setup cursor` | Write `.cursor/mcp.json` in the current directory |
+| `gdcli setup vscode` | Write `.vscode/mcp.json` in the current directory |
+| `gdcli setup json` | Print MCP config JSON to stdout |
 
 ### MCP Server
 

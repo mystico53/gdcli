@@ -112,6 +112,12 @@ enum Commands {
         project_dir: Option<String>,
     },
 
+    /// Auto-configure MCP server for AI clients
+    Setup {
+        #[command(subcommand)]
+        target: SetupTarget,
+    },
+
     /// Godot API documentation lookup
     Docs {
         /// Class name to look up
@@ -403,6 +409,18 @@ enum UidAction {
     },
 }
 
+#[derive(Subcommand)]
+enum SetupTarget {
+    /// Configure Claude Code (runs `claude mcp add`)
+    ClaudeCode,
+    /// Write .cursor/mcp.json in the current directory
+    Cursor,
+    /// Write .vscode/mcp.json in the current directory
+    Vscode,
+    /// Print MCP config JSON to stdout
+    Json,
+}
+
 fn main() {
     // When double-clicked (no args, interactive terminal), show a friendly message
     if std::env::args().len() <= 1 && std::io::stdout().is_terminal() {
@@ -410,6 +428,7 @@ fn main() {
         println!();
         println!("This is a command-line tool. Open a terminal and run:");
         println!("  gdcli doctor        Check your setup");
+        println!("  gdcli setup         Auto-configure MCP for AI clients");
         println!("  gdcli --help        See all commands");
         println!();
         println!("Press Enter to exit...");
@@ -440,6 +459,20 @@ fn run(command: Commands, json_mode: bool) -> anyhow::Result<()> {
     // MCP server mode — takes over stdio, never returns normally
     if let Commands::Mcp { project_dir } = command {
         return mcp::run_mcp_server(project_dir.as_deref());
+    }
+
+    // Setup command — configure MCP for AI clients
+    if let Commands::Setup { target } = command {
+        let ok = match target {
+            SetupTarget::ClaudeCode => commands::setup::run_claude_code(json_mode)?,
+            SetupTarget::Cursor => commands::setup::run_cursor(json_mode)?,
+            SetupTarget::Vscode => commands::setup::run_vscode(json_mode)?,
+            SetupTarget::Json => commands::setup::run_json(json_mode)?,
+        };
+        if !ok {
+            std::process::exit(1);
+        }
+        return Ok(());
     }
 
     // Commands that don't need Godot (pure filesystem)
