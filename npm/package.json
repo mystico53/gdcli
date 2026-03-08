@@ -1,8 +1,15 @@
 {
   "name": "gdcli-godot",
-  "version": "0.1.3",
+  "version": "0.2.2",
   "description": "Agent-friendly CLI toolkit for Godot 4 — scene editing, linting, MCP server",
-  "keywords": ["godot", "cli", "mcp", "gamedev", "gdscript", "ai-agent"],
+  "keywords": [
+    "godot",
+    "cli",
+    "mcp",
+    "gamedev",
+    "gdscript",
+    "ai-agent"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
