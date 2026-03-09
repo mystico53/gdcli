@@ -1,0 +1,33 @@
+[gd_scene load_steps=4 format=3 uid="uid://vucmdtmgglh47"]
+
+[ext_resource type="Script" path="res://scenes/main.gd" id="1_187kq"]
+
+[ext_resource type="PackedScene" path="res://scenes/player.tscn" id="2_buse8"]
+
+[ext_resource type="PackedScene" path="res://scenes/hud.tscn" id="3_ua47a"]
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1_187kq")
+
+[node name="Player" parent="." instance=ExtResource("2_buse8")]
+position = Vector2(576, 324)
+
+[node name="HUD" parent="." instance=ExtResource("3_ua47a")]
+
+[node name="Enemies" type="Node2D" parent="."]
+
+[node name="Bullets" type="Node2D" parent="."]
+
+[node name="SpawnTimer" type="Timer" parent="."]
+wait_time = 2.0
+autostart = true
+
+[node name="Pickups" type="Node2D" parent="."]
+
+[node name="PickupTimer" type="Timer" parent="."]
+wait_time = 3.0
+autostart = true
+
+[connection signal="timeout" from="SpawnTimer" to="." method="_on_spawn_timer_timeout"]
+
+[connection signal="timeout" from="PickupTimer" to="." method="_on_pickup_timer_timeout"]

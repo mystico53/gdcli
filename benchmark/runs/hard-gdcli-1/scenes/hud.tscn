@@ -1,0 +1,36 @@
+[gd_scene load_steps=3 format=3 uid="uid://iddnsm31th1na"]
+
+[ext_resource type="Script" path="res://scenes/hud.gd" id="1_j9vmy"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_5ei19"]
+bg_color = Color(0.8, 0.1, 0.1, 1)
+corner_radius_top_left = 4
+corner_radius_top_right = 4
+corner_radius_bottom_left = 4
+corner_radius_bottom_right = 4
+
+[node name="HUD" type="CanvasLayer"]
+script = ExtResource("1_j9vmy")
+
+[node name="MarginContainer" type="MarginContainer" parent="."]
+anchor_right = 1.0
+anchor_bottom = 1.0
+theme_override_constants/margin_left = 20
+theme_override_constants/margin_top = 20
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer"]
+
+[node name="ScoreLabel" type="Label" parent="MarginContainer/VBoxContainer"]
+text = "Score: 0"
+theme_override_font_sizes/font_size = 24
+
+[node name="HealthBar" type="ProgressBar" parent="MarginContainer/VBoxContainer"]
+min_value = 0
+max_value = 100
+value = 100
+custom_minimum_size = Vector2(200, 20)
+theme_override_styles/fill = SubResource("StyleBoxFlat_5ei19")
+
+[node name="PickupLabel" type="Label" parent="MarginContainer/VBoxContainer"]
+text = "Pickups: 0"
+theme_override_font_sizes/font_size = 24
