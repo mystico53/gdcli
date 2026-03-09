@@ -1391,20 +1391,25 @@ pub fn add_connection_to_file(
 
     let scene = parse_scene_text(&content)?;
 
+    // Build set of valid connection paths for all nodes in the scene
+    let valid_paths: Vec<String> = scene
+        .nodes
+        .iter()
+        .map(|n| match &n.parent {
+            None => ".".to_string(),
+            Some(p) if p == "." => n.name.clone(),
+            Some(p) => format!("{}/{}", p, n.name),
+        })
+        .collect();
+
     // Validate from node exists
-    if from != "." {
-        let root_name = scene.nodes.first().map(|n| n.name.as_str()).unwrap_or("");
-        if !scene.nodes.iter().any(|n| n.name == from) && from != root_name {
-            anyhow::bail!("Node '{}' (from) not found in scene", from);
-        }
+    if !valid_paths.iter().any(|p| p == from) {
+        anyhow::bail!("Node '{}' (from) not found in scene", from);
     }
 
     // Validate to node exists
-    if to != "." {
-        let root_name = scene.nodes.first().map(|n| n.name.as_str()).unwrap_or("");
-        if !scene.nodes.iter().any(|n| n.name == to) && to != root_name {
-            anyhow::bail!("Node '{}' (to) not found in scene", to);
-        }
+    if !valid_paths.iter().any(|p| p == to) {
+        anyhow::bail!("Node '{}' (to) not found in scene", to);
     }
 
     // Check for duplicate connection
@@ -1859,6 +1864,43 @@ size = Vector2(30, 30)
 
         // Non-existent node should fail
         let bad = add_connection_to_file(&scene_path, "pressed", "NoNode", ".", "_on_pressed");
+        assert!(bad.is_err());
+        assert!(bad.unwrap_err().to_string().contains("not found"));
+
+        let _ = std::fs::remove_file(&scene_path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn test_add_connection_nested_node() {
+        let dir = std::env::temp_dir().join("gdcli_test_conn_nested");
+        let _ = std::fs::create_dir_all(&dir);
+        let scene_path = dir.join("test_nested_conn.tscn");
+
+        let content = "[gd_scene format=3 uid=\"uid://abc\"]\n\n\
+            [node name=\"Main\" type=\"Control\"]\n\n\
+            [node name=\"Container\" type=\"VBoxContainer\" parent=\".\"]\n\n\
+            [node name=\"PlayButton\" type=\"Button\" parent=\"Container\"]\n";
+        std::fs::write(&scene_path, content).unwrap();
+
+        // Nested path should succeed
+        add_connection_to_file(
+            &scene_path,
+            "pressed",
+            "Container/PlayButton",
+            ".",
+            "_on_play",
+        )
+        .unwrap();
+
+        let result = std::fs::read_to_string(&scene_path).unwrap();
+        assert!(result.contains(
+            "[connection signal=\"pressed\" from=\"Container/PlayButton\" to=\".\" method=\"_on_play\"]"
+        ));
+
+        // Bare name for a nested node should fail (not a direct child of root)
+        let bad =
+            add_connection_to_file(&scene_path, "pressed", "PlayButton", ".", "_on_play_bad");
         assert!(bad.is_err());
         assert!(bad.unwrap_err().to_string().contains("not found"));
 

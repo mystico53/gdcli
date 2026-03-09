@@ -568,11 +568,11 @@ pub fn all_tools() -> Vec<ToolDef> {
                     },
                     "from": {
                         "type": "string",
-                        "description": "Source node name (emitter) — use \".\" for root"
+                        "description": "Source node path (emitter). Use \".\" for root, bare name for direct children (e.g. \"Button\"), or slash-separated path for nested nodes (e.g. \"VBoxContainer/PlayButton\")"
                     },
                     "to": {
                         "type": "string",
-                        "description": "Target node name (receiver) — use \".\" for root"
+                        "description": "Target node path (receiver). Use \".\" for root, bare name for direct children (e.g. \"Button\"), or slash-separated path for nested nodes (e.g. \"VBoxContainer/PlayButton\")"
                     },
                     "method": {
                         "type": "string",
@@ -599,11 +599,11 @@ pub fn all_tools() -> Vec<ToolDef> {
                     },
                     "from": {
                         "type": "string",
-                        "description": "Source node name — use \".\" for root"
+                        "description": "Source node path (emitter). Use \".\" for root, bare name for direct children, or slash-separated path for nested nodes"
                     },
                     "to": {
                         "type": "string",
-                        "description": "Target node name — use \".\" for root"
+                        "description": "Target node path (receiver). Use \".\" for root, bare name for direct children, or slash-separated path for nested nodes"
                     },
                     "method": {
                         "type": "string",

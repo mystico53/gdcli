@@ -370,10 +370,10 @@ enum ConnectionAction {
         /// Signal name (e.g. pressed, timeout, body_entered)
         signal: String,
 
-        /// Source node name (emitter) — use "." for root
+        /// Source node path (emitter) — "." for root, bare name for direct children, or slash-separated for nested (e.g. "VBoxContainer/Button")
         from: String,
 
-        /// Target node name (receiver) — use "." for root
+        /// Target node path (receiver) — "." for root, bare name for direct children, or slash-separated for nested (e.g. "VBoxContainer/Button")
         to: String,
 
         /// Method name on the target node
@@ -388,10 +388,10 @@ enum ConnectionAction {
         /// Signal name
         signal: String,
 
-        /// Source node name — use "." for root
+        /// Source node path — "." for root, bare name for direct children, or slash-separated for nested
         from: String,
 
-        /// Target node name — use "." for root
+        /// Target node path — "." for root, bare name for direct children, or slash-separated for nested
         to: String,
 
         /// Method name on the target node
